@@ -17,17 +17,26 @@ class RealEstateDB:
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or self.DEFAULT_DB_PATH
-        # DB 파일이 위치할 상위 폴더 생성
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+        self._memory_conn = None
+        if self.db_path == ":memory:":
+            self._memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
+            self._memory_conn.row_factory = sqlite3.Row
+        else:
+            db_dir = os.path.dirname(self.db_path)
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
 
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        """새로운 SQLite 연결 객체를 반환합니다."""
-        conn = sqlite3.connect(self.db_path)
+        """새로운 SQLite 연결 객체를 반환합니다 (인메모리 DB인 경우 지속 연결 반환)."""
+        if self.db_path == ":memory:" and self._memory_conn is not None:
+            return self._memory_conn
+
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
         return conn
 
     def _init_db(self) -> None:

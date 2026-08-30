@@ -95,6 +95,25 @@ def get_rolling_year_month_list(buffer_months: int = 2) -> list:
     return sorted(list(ym_set))
 
 
+from urllib3.util import Retry
+from requests.adapters import HTTPAdapter
+
+def get_retry_session(retries: int = 3, backoff_factor: float = 0.5) -> requests.Session:
+    """네트워크 일시 오류 시 지수 백오프로 재시도하는 requests.Session 객체 생성"""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET"],
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
 def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 1000):
     """
     단일 페이지의 공공데이터포털 실거래가 API를 호출합니다.
@@ -110,11 +129,12 @@ def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_
         "numOfRows": str(num_of_rows),
     }
 
+    session = get_retry_session()
     try:
-        res = requests.get(API_URL, params=params, timeout=15)
+        res = session.get(API_URL, params=params, timeout=15)
         if res.status_code in [401, 403] or "SERVICE_KEY_IS_NULL" in res.text:
             raw_url = f"{API_URL}?serviceKey={api_key.strip()}&LAWD_CD={lawd_cd}&DEAL_YMD={deal_ymd}&pageNo={page_no}&numOfRows={num_of_rows}"
-            res = requests.get(raw_url, timeout=15)
+            res = session.get(raw_url, timeout=15)
 
         data = xmltodict.parse(res.text)
     except Exception as e:
