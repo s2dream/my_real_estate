@@ -53,17 +53,21 @@ GitHub Actions가 수집한 SQLite DB 파일(`data/transactions.db`)을 저장�
 
 ```yaml
 collection:
-  # 1) 수집 시작 년월 (한국 시간 기준 현재 월까지 자동 순회 수집)
+  # 1) 초기 전체 수집 시작 년월 (신규 지역/최초 수집 시 사용)
   start_year_month: "202601"
 
-  # 2) 수집 대상 지역 코드 (복수 추가 가능)
+  # 2) 30일 신고 의무 기간 대응 롤링 버퍼 (기존 수집 지역 대상)
+  # - 이미 DB에 데이터가 있는 지역은 당월 + 직전 N개월만 호출하여 API 트래픽을 대폭 절감하고 지연 신고건을 갱신합니다.
+  recent_months_buffer: 2 # 기본 최근 3개월 (당월, 전월, 전전월)
+
+  # 3) 수집 대상 지역 코드 (복수 추가 가능)
   regions:
     - code: "41115"
       name: "수원시 팔달구"
-    # - code: "41117"
-    #   name: "수원시 영통구"
+    - code: "41117"
+      name: "수원시 영통구"
 
-  # 3) 전용면적(타입) 필터
+  # 4) 전용면적(타입) 필터
   area_filter:
     enabled: true
     types:
@@ -71,7 +75,12 @@ collection:
         min: 84.0
         max: 85.0
 
-  # 4) 특정 관심 단지 필터 (비워두면 전체 수집)
+  # 5) 준공연도(건축년도) 필터 (현시점 기준 N년 이내 신축/준신축 아파트)
+  build_year_filter:
+    enabled: true
+    within_years: 10
+
+  # 6) 특정 관심 단지 필터 (비워두면 전체 수집)
   target_complexes: []
 
 storage:

@@ -174,6 +174,21 @@ class RealEstateDB:
             row = cursor.fetchone()
             return row[0] if row else 0
 
+    def has_region_data(self, sgg_cd: str) -> bool:
+        """특정 지역 코드(sggCd)의 데이터가 DB에 존재하는지 확인합니다."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT 1 FROM {self.TABLE_NAME} WHERE sggCd = ? LIMIT 1", (str(sgg_cd),))
+            return cursor.fetchone() is not None
+
+    def get_region_count(self, sgg_cd: str) -> int:
+        """특정 지역 코드(sggCd)의 거래 건수를 반환합니다."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT COUNT(*) FROM {self.TABLE_NAME} WHERE sggCd = ?", (str(sgg_cd),))
+            row = cursor.fetchone()
+            return row[0] if row else 0
+
     def __enter__(self):
         return self
 

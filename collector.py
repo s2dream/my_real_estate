@@ -30,11 +30,16 @@ def load_config(config_path="setting.yml"):
         return {
             "collection": {
                 "start_year_month": "202601",
-                "regions": [{"code": "41115", "name": "수원시 팔달구"}],
+                "recent_months_buffer": 2,
+                "regions": [
+                    {"code": "41115", "name": "수원시 팔달구"},
+                    {"code": "41117", "name": "수원시 영통구"},
+                ],
                 "area_filter": {
                     "enabled": True,
                     "types": [{"name": "84타입", "min": 84.0, "max": 85.0}],
                 },
+                "build_year_filter": {"enabled": True, "within_years": 10},
                 "target_complexes": [],
             },
             "storage": {"db_path": "data/transactions.db", "table_name": "transactions"},
@@ -69,6 +74,26 @@ def generate_year_month_list(start_ym: str, end_ym: str) -> list:
         curr = datetime(year, month, 1)
 
     return ym_list
+
+
+def get_rolling_year_month_list(buffer_months: int = 2) -> list:
+    """
+    한국 시간 기준 당월(0) 및 직전 N개 월의 년월 리스트를 반환합니다.
+    (예: 8월 기준 buffer_months=2 -> ['202606', '202607', '202608'])
+    """
+    kst_now = get_kst_now()
+    ym_set = set()
+
+    for i in range(buffer_months + 1):
+        # i개월 전 날짜 계산
+        year = kst_now.year
+        month = kst_now.month - i
+        while month <= 0:
+            month += 12
+            year -= 1
+        ym_set.add(f"{year}{month:02d}")
+
+    return sorted(list(ym_set))
 
 
 def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 1000):
@@ -161,7 +186,7 @@ def fetch_all_pages_for_month(api_key: str, lawd_cd: str, region_name: str, deal
 
 def clean_and_filter(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     """
-    수집된 원본 데이터프레임을 전처리하고 설정(면적, 단지)에 맞게 필터링합니다.
+    수집된 원본 데이터프레임을 전처리하고 설정(면적, 준공연도, 단지)에 맞게 필터링합니다.
     """
     if df.empty:
         return df
@@ -238,7 +263,7 @@ def clean_and_filter(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
 def run():
     print("=" * 60)
-    print("🚀 [아파트 실거래가 수집 파이프라인 시작 (SQLite 연동)]")
+    print("🚀 [스마트 실거래가 수집 파이프라인 시작 (30일 신고유예 롤링 갱신)]")
     print("=" * 60)
 
     # 1. API 키 확인
@@ -254,28 +279,43 @@ def run():
     storage_cfg = config.get("storage", {})
 
     start_ym = collection_cfg.get("start_year_month", "202601")
+    buffer_months = int(collection_cfg.get("recent_months_buffer", 2))
     regions = collection_cfg.get("regions", [{"code": "41115", "name": "수원시 팔달구"}])
     db_path = storage_cfg.get("db_path", "data/transactions.db")
 
-    # 한국 시간 기준 오늘 연월
+    # 한국 시간 기준 오늘
     kst_today = get_kst_now()
     end_ym = kst_today.strftime("%Y%m")
-    ym_list = generate_year_month_list(start_ym, end_ym)
 
-    print(f"📅 수집 기준 시점 (KST): {kst_today.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"📅 수집 대상 기간: {start_ym} ~ {end_ym} (총 {len(ym_list)}개 월)")
-    region_desc = [f"{r.get('name')}({r.get('code')})" for r in regions]
-    print(f"📍 수집 대상 지역: {region_desc}")
-    print(f"📐 면적 필터 활성화: {collection_cfg.get('area_filter', {}).get('enabled', False)}")
-    print(f"💾 대상 데이터베이스: {db_path}")
+    # DB 인스턴스 초기화
+    db = RealEstateDB(db_path=db_path)
+    before_total_cnt = db.get_count()
+
+    print(f"📅 실행 기준 시점 (KST): {kst_today.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"💾 대상 데이터베이스: {db_path} (현재 적재 건수: {before_total_cnt}건)")
+    print(f"⏱️ 30일 신고 지연 대응 롤링 버퍼: 최근 {buffer_months + 1}개월")
     print("-" * 60)
 
-    # 3. 전체 데이터 순회 수집
+    # 3. 지역별 맞춤 기간 수집 (DB 존재 여부 기반 하이브리드 수집)
     raw_collected_items = []
+    
     for r in regions:
         code = str(r.get("code"))
         name = r.get("name", code)
-        for ym in ym_list:
+        has_data = db.has_region_data(code)
+
+        if has_data:
+            # 기존 수집 지역: 당월 + 직전 buffer_months 개월 (30일 의무 신고 지연분 및 수정건 갱신)
+            target_ym_list = get_rolling_year_month_list(buffer_months)
+            mode_desc = f"🔄 롤링 갱신 ({len(target_ym_list)}개 월: {target_ym_list})"
+        else:
+            # 신규 지역 / 최초 수집: start_year_month 부터 전체 수집
+            target_ym_list = generate_year_month_list(start_ym, end_ym)
+            mode_desc = f"⚡ 초기 전체 수집 ({len(target_ym_list)}개 월: {start_ym}~{end_ym})"
+
+        print(f"📍 [{name} ({code})] 모드: {mode_desc}")
+
+        for ym in target_ym_list:
             items = fetch_all_pages_for_month(api_key, code, name, ym)
             if items:
                 for item in items:
@@ -294,14 +334,11 @@ def run():
         print(f"✨ 필터링 및 전처리 완료 데이터: {len(new_df)}건")
 
     # 4. RealEstateDB 클래스를 통한 SQLite UPSERT 적재
-    db = RealEstateDB(db_path=db_path)
-    before_cnt = db.get_count()
-
     if not new_df.empty:
         total_cnt, inserted_cnt = db.upsert_transactions(new_df)
-        print(f"💾 SQLite 적재 완료: 기존 {before_cnt}건 -> 최종 {total_cnt}건 (신규/갱신: {inserted_cnt}건)")
+        print(f"💾 SQLite 적재 완료: 기존 {before_total_cnt}건 -> 최종 {total_cnt}건 (신규/갱신: {inserted_cnt}건)")
     else:
-        print(f"ℹ️ 적재할 신규 데이터가 없습니다. (현재 DB 총 건수: {before_cnt}건)")
+        print(f"ℹ️ 적재할 신규 데이터가 없습니다. (현재 DB 총 건수: {before_total_cnt}건)")
 
     print(f"🎉 파이프라인 정상 종료: {db_path}")
     print("=" * 60)
