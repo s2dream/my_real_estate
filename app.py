@@ -165,25 +165,60 @@ def main():
     selected_regions = st.sidebar.multiselect("지역 선택", options=db_regions, default=db_regions)
     filtered_df = df[df["regionName"].isin(selected_regions)]
 
-    # 2. 단지명 필터 (선택된 지역에 속한 단지 목록)
+    # 2. 단지명 필터 (기본값으로 '매교역푸르지오SKVIEW', '수원센트럴아이파크자이' 지정)
     available_complexes = sorted(filtered_df["aptNm"].dropna().unique().tolist())
+    target_defaults = ["매교역푸르지오SKVIEW", "수원센트럴아이파크자이"]
+    default_selected_complexes = [apt for apt in target_defaults if apt in available_complexes]
+
     selected_complexes = st.sidebar.multiselect(
-        "아파트 단지명 (다중 선택 가능)",
+        "아파트 단지명",
         options=available_complexes,
-        default=[],
-        help="특정 관심 단지만 선택하여 비교할 수 있습니다. 비워둘 경우 전체 단지를 표시합니다.",
+        default=default_selected_complexes,
+        help="선택한 단지만 선별하여 조회합니다. 모두 선택을 해제(비움)하면 전체 단지를 표시합니다.",
     )
     if selected_complexes:
         filtered_df = filtered_df[filtered_df["aptNm"].isin(selected_complexes)]
 
-    # 3. 면적 타입 필터
+    # 3. 준공 연차 (신축/준신축) 필터 (모바일 친화 퀵버튼 + 슬라이더)
+    st.sidebar.markdown("##### 🏗️ 준공 연차 (아파트 연식) 필터")
+    current_year = 2026 # 또는 pd.Timestamp.now().year
+    
+    # 모바일/데스크톱 모두 터치하기 편한 퀵 프리셋 라디오
+    quick_age = st.sidebar.radio(
+        "연식 퀵 프리셋",
+        ["신축 (5년 이내)", "준신축 (10년 이내)", "15년 이내", "20년 이내", "전체 연식", "직접 슬라이더 조정"],
+        index=0, # default 5년
+        horizontal=True,
+    )
+
+    if quick_age == "신축 (5년 이내)":
+        max_age = 5
+    elif quick_age == "준신축 (10년 이내)":
+        max_age = 10
+    elif quick_age == "15년 이내":
+        max_age = 15
+    elif quick_age == "20년 이내":
+        max_age = 20
+    elif quick_age == "전체 연식":
+        max_age = 30
+    else:
+        max_age = st.sidebar.slider("준공 연차 범위 (년 이내)", min_value=0, max_value=30, value=5, step=1)
+
+    st.sidebar.caption(f"ℹ️ {current_year - max_age}년 이후 준공된 아파트 조회 (최근 {max_age}년 이내)")
+
+    if "buildYear" in filtered_df.columns:
+        build_numeric = pd.to_numeric(filtered_df["buildYear"], errors="coerce")
+        min_allowed_build_year = current_year - max_age
+        filtered_df = filtered_df[build_numeric >= min_allowed_build_year]
+
+    # 4. 면적 타입 필터
     if "areaType" in filtered_df.columns and filtered_df["areaType"].notna().any():
         available_types = sorted(filtered_df["areaType"].dropna().unique().tolist())
         selected_types = st.sidebar.multiselect("전용면적 타입", options=available_types, default=available_types)
         if selected_types:
             filtered_df = filtered_df[filtered_df["areaType"].isin(selected_types)]
 
-    # 4. 기간 필터
+    # 5. 기간 필터
     if "dealDate" in filtered_df.columns and not filtered_df["dealDate"].dropna().empty:
         min_date = filtered_df["dealDate"].min().date()
         max_date = filtered_df["dealDate"].max().date()
@@ -195,7 +230,7 @@ def main():
                     (filtered_df["dealDate"].dt.date >= start_d) & (filtered_df["dealDate"].dt.date <= end_d)
                 ]
 
-    # 5. 거래 취소/해제 건 필터
+    # 6. 거래 취소/해제 건 필터
     include_canceled = st.sidebar.checkbox("거래 취소/해제 건 포함", value=False, help="계약 후 해제/취소된 거래를 포함하여 조회합니다.")
     if not include_canceled:
         filtered_df = filtered_df[~filtered_df["isCanceled"]]
