@@ -619,7 +619,7 @@ def main():
 
         st.markdown("---")
 
-        # 2. 준공연도 + 거래월별 세분화 차트 (동적 축 스케일링)
+        # 2. 준공연도 + 거래월별 세분화 차트 (동적 축 스케일링 & 폰트 크기 강화)
         st.markdown("#### 2️⃣ 건축년도(준공연도) × 거래월(계약월) 세분화 평균 실거래가")
 
         if "buildYear" in filtered_df.columns and "dealYM" in filtered_df.columns:
@@ -644,79 +644,37 @@ def main():
                 title="준공연도별 월별 실거래가 추이 (차이 식별 최적화)",
                 labels={"buildYear_label": "준공연도", "mean": "평균 거래가 (만원)", "dealYM": "거래 계약월"},
                 template="plotly_white",
-                text=build_monthly_agg["mean"].apply(lambda x: f"{int(round(x)):,}만"),
+                text=build_monthly_agg["mean"].apply(lambda x: f" {int(round(x)):,}만원 "),
+            )
+            # 글씨 크기를 14px 굵게 설정하고 텍스트 위치 최적화
+            fig_build_monthly.update_traces(
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont=dict(size=13, weight="bold"),
             )
             fig_build_monthly.update_layout(
-                height=max(450, len(build_monthly_agg["buildYear"].unique()) * 60 + 100),
-                xaxis=dict(range=[max(0, int(min_b_val * 0.85)), int(max_b_val * 1.08)], tickformat=","),
+                height=max(480, len(build_monthly_agg["buildYear"].unique()) * 85 + 120),
+                xaxis=dict(range=[max(0, int(min_b_val * 0.85)), int(max_b_val * 1.10)], tickformat=","),
+                yaxis=dict(tickfont=dict(size=13, weight="bold")),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
             st.plotly_chart(fig_build_monthly, use_container_width=True)
 
     # ---------------------------------------------------------
-    # TAB 4: 거래량 & 가격 분포 (지역/단지별 토글 및 세부 통계)
+    # TAB 4: 거래량 & 가격 분포 (아파트 단지별 보기 기본 우선)
     # ---------------------------------------------------------
     with tab4:
         st.subheader("📊 거래량 추이 및 가격대 분포 통계")
 
+        # 단지별 보기를 1순위 default로 설정
         view_mode = st.radio(
             "분석 기준 선택",
-            ["🌐 지역(구)별 보기", "🏢 아파트 단지별 보기"],
+            ["🏢 아파트 단지별 보기", "🌐 지역(구)별 보기"],
+            index=0,
             horizontal=True,
         )
 
-        if view_mode == "🌐 지역(구)별 보기":
-            col_v1, col_v2 = st.columns(2)
-            with col_v1:
-                vol_region = filtered_df.groupby(["dealYM", "regionName"]).size().reset_index(name="거래건수")
-                fig_v_r = px.bar(
-                    vol_region,
-                    x="dealYM",
-                    y="거래건수",
-                    color="regionName",
-                    barmode="stack",
-                    title="지역별 월별 실거래 건수 추이",
-                    labels={"dealYM": "계약년월", "거래건수": "거래건수", "regionName": "지역"},
-                    text_auto=True,
-                    template="plotly_white",
-                )
-                fig_v_r.update_layout(height=420)
-                st.plotly_chart(fig_v_r, use_container_width=True)
-
-            with col_v2:
-                fig_h_r = px.histogram(
-                    filtered_df,
-                    x="dealAmount",
-                    color="regionName",
-                    nbins=25,
-                    title="지역별 실거래가 가격대 분포 (Boxplot 결합)",
-                    labels={"dealAmount": "거래금액 (만원)", "regionName": "지역"},
-                    template="plotly_white",
-                    marginal="box",
-                )
-                fig_h_r.update_layout(height=420, yaxis=dict(tickformat=","), xaxis=dict(tickformat=","))
-                st.plotly_chart(fig_h_r, use_container_width=True)
-
-            st.markdown("##### 📋 지역별 가격 통계 요약표")
-            reg_stat = (
-                filtered_df.groupby("regionName")["dealAmount"]
-                .agg(
-                    거래건수="count",
-                    평균가="mean",
-                    중위값="median",
-                    최저가="min",
-                    최고가="max",
-                    표준편차="std",
-                )
-                .reset_index()
-            )
-            reg_stat["평균가"] = reg_stat["평균가"].apply(format_korean_currency)
-            reg_stat["중위값"] = reg_stat["중위값"].apply(format_korean_currency)
-            reg_stat["최저가"] = reg_stat["최저가"].apply(format_korean_currency)
-            reg_stat["최고가"] = reg_stat["최고가"].apply(format_korean_currency)
-            reg_stat["표준편차"] = reg_stat["표준편차"].apply(lambda x: f"±{int(round(x)):,}만원" if pd.notna(x) else "-")
-            st.dataframe(reg_stat, use_container_width=True, hide_index=True)
-
-        else: # 🏢 아파트 단지별 보기
+        if view_mode == "🏢 아파트 단지별 보기":
             col_v1, col_v2 = st.columns(2)
             with col_v1:
                 # 단지별 월별 거래량 (단지 일관 고유 색상 매핑 적용)
@@ -733,7 +691,7 @@ def main():
                     text_auto=True,
                     template="plotly_white",
                 )
-                fig_v_a.update_layout(height=420)
+                fig_v_a.update_layout(height=430)
                 st.plotly_chart(fig_v_a, use_container_width=True)
 
             with col_v2:
@@ -749,7 +707,7 @@ def main():
                     labels={"aptNm": "단지명", "dealAmount": "거래금액 (만원)"},
                     template="plotly_white",
                 )
-                fig_b_a.update_layout(height=420, showlegend=False, yaxis=dict(tickformat=","))
+                fig_b_a.update_layout(height=430, showlegend=False, yaxis=dict(tickformat=","))
                 st.plotly_chart(fig_b_a, use_container_width=True)
 
             st.markdown("##### 📋 단지별 세부 통계 요약표 (사분위수 & 평당가 & 최근 거래일)")
@@ -774,6 +732,58 @@ def main():
             
             apt_stat_df = pd.DataFrame(apt_detail_stats).sort_values(by="거래건수", ascending=False)
             st.dataframe(apt_stat_df, use_container_width=True, hide_index=True)
+
+        else: # 🌐 지역(구)별 보기
+            col_v1, col_v2 = st.columns(2)
+            with col_v1:
+                vol_region = filtered_df.groupby(["dealYM", "regionName"]).size().reset_index(name="거래건수")
+                fig_v_r = px.bar(
+                    vol_region,
+                    x="dealYM",
+                    y="거래건수",
+                    color="regionName",
+                    barmode="stack",
+                    title="지역별 월별 실거래 건수 추이",
+                    labels={"dealYM": "계약년월", "거래건수": "거래건수", "regionName": "지역"},
+                    text_auto=True,
+                    template="plotly_white",
+                )
+                fig_v_r.update_layout(height=430)
+                st.plotly_chart(fig_v_r, use_container_width=True)
+
+            with col_v2:
+                fig_h_r = px.histogram(
+                    filtered_df,
+                    x="dealAmount",
+                    color="regionName",
+                    nbins=25,
+                    title="지역별 실거래가 가격대 분포 (Boxplot 결합)",
+                    labels={"dealAmount": "거래금액 (만원)", "regionName": "지역"},
+                    template="plotly_white",
+                    marginal="box",
+                )
+                fig_h_r.update_layout(height=430, yaxis=dict(tickformat=","), xaxis=dict(tickformat=","))
+                st.plotly_chart(fig_h_r, use_container_width=True)
+
+            st.markdown("##### 📋 지역별 가격 통계 요약표")
+            reg_stat = (
+                filtered_df.groupby("regionName")["dealAmount"]
+                .agg(
+                    거래건수="count",
+                    평균가="mean",
+                    중위값="median",
+                    최저가="min",
+                    최고가="max",
+                    표준편차="std",
+                )
+                .reset_index()
+            )
+            reg_stat["평균가"] = reg_stat["평균가"].apply(format_korean_currency)
+            reg_stat["중위값"] = reg_stat["중위값"].apply(format_korean_currency)
+            reg_stat["최저가"] = reg_stat["최저가"].apply(format_korean_currency)
+            reg_stat["최고가"] = reg_stat["최고가"].apply(format_korean_currency)
+            reg_stat["표준편차"] = reg_stat["표준편차"].apply(lambda x: f"±{int(round(x)):,}만원" if pd.notna(x) else "-")
+            st.dataframe(reg_stat, use_container_width=True, hide_index=True)
 
     # ---------------------------------------------------------
     # TAB 5: 실거래 상세 목록 & CSV 다운로드
