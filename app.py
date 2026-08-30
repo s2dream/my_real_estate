@@ -733,7 +733,64 @@ def main():
     # TAB 5: 실거래 상세 목록 & CSV 다운로드
     # ---------------------------------------------------------
     with tab5:
-        st.subheader("실거래 상세 내역 및 데이터 다운로드")
+        st.subheader("📋 실거래 상세 내역 및 맞춤형 데이터 다운로드")
+
+        # Tab 5 전용 다이나믹 필터 바
+        col_t1, col_t2 = st.columns([1.5, 1])
+
+        # 현재 탭에서 선택 가능한 단지 목록
+        tab5_available_apts = sorted(filtered_df["aptNm"].dropna().unique().tolist())
+
+        with col_t1:
+            tab5_selected_apts = st.multiselect(
+                "🏢 아파트 단지명 필터",
+                options=tab5_available_apts,
+                default=[],
+                placeholder="전체 단지 조회 중 (특정 단지를 선택해 집중 분석)",
+                key="tab5_apt_multiselect",
+                help="조회하고자 하는 단지를 선택하세요. 비워둘 경우 전체 단지를 조회합니다.",
+            )
+
+        with col_t2:
+            tab5_search_query = st.text_input(
+                "🔍 단지명/동/거래유형 키워드 검색",
+                value="",
+                placeholder="예: 푸르지오, 매교동, 중개 등",
+                key="tab5_keyword_search",
+            )
+
+        # 다이나믹 필터링 적용
+        tab5_df = filtered_df.copy()
+        if tab5_selected_apts:
+            tab5_df = tab5_df[tab5_df["aptNm"].isin(tab5_selected_apts)]
+
+        if tab5_search_query.strip():
+            query = tab5_search_query.strip().lower()
+            mask = (
+                tab5_df["aptNm"].astype(str).str.lower().str.contains(query)
+                | tab5_df["umdNm"].astype(str).str.lower().str.contains(query)
+                | tab5_df["regionName"].astype(str).str.lower().str.contains(query)
+                | tab5_df["dealType"].astype(str).str.lower().str.contains(query)
+            )
+            tab5_df = tab5_df[mask]
+
+        # 결과 요약 헤더 및 통계
+        res_cnt = len(tab5_df)
+        res_avg = tab5_df["dealAmount"].mean() if res_cnt > 0 else 0
+        res_max = tab5_df["dealAmount"].max() if res_cnt > 0 else 0
+        res_min = tab5_df["dealAmount"].min() if res_cnt > 0 else 0
+
+        st.markdown(
+            f"""
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;">
+                <b>📊 실시간 조회 결과:</b> 총 <b>{res_cnt:,}</b>건 | 
+                평균 거래가: <b>{format_korean_currency(res_avg)}</b> | 
+                최고가: <span style="color:#d90429;font-weight:bold;">{format_korean_currency(res_max)}</span> | 
+                최저가: <span style="color:#0077b6;font-weight:bold;">{format_korean_currency(res_min)}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         display_cols = [
             "dealDate",
@@ -749,7 +806,7 @@ def main():
             "cdealType",
             "cdealDay",
         ]
-        available_display_cols = [c for c in display_cols if c in filtered_df.columns]
+        available_display_cols = [c for c in display_cols if c in tab5_df.columns]
 
         col_rename_map = {
             "dealDate": "계약일",
@@ -766,7 +823,7 @@ def main():
             "cdealDay": "해제일자",
         }
 
-        table_df = filtered_df[available_display_cols].copy()
+        table_df = tab5_df[available_display_cols].copy()
         table_df["거래금액(한글)"] = table_df["dealAmount"].apply(format_korean_currency)
         if "dealDate" in table_df.columns:
             table_df["dealDate"] = table_df["dealDate"].dt.strftime("%Y-%m-%d")
@@ -783,12 +840,16 @@ def main():
 
         st.dataframe(table_df, use_container_width=True, hide_index=True)
 
-        # CSV 다운로드
-        csv_data = filtered_df.to_csv(index=False).encode("utf-8-sig")
+        # 다이나믹 파일명 생성 (단지명 선택 시 파일명에 반영)
+        apt_tag = f"_{tab5_selected_apts[0]}" if len(tab5_selected_apts) == 1 else f"_{len(tab5_selected_apts)}단지" if len(tab5_selected_apts) > 1 else ""
+        file_name = f"real_estate_transactions{apt_tag}_{pd.Timestamp.now().strftime('%Y%m%d')}.csv"
+
+        # CSV 다운로드 버튼
+        csv_data = tab5_df.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
-            label="📥 필터링된 실거래 데이터 CSV 다운로드",
+            label=f"📥 필터링된 실거래 데이터 CSV 다운로드 ({res_cnt:,}건)",
             data=csv_data,
-            file_name="real_estate_transactions_filtered.csv",
+            file_name=file_name,
             mime="text/csv",
         )
 
