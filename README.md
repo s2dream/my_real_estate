@@ -13,8 +13,9 @@ my_real_estate/
 │       └── collector.yml       # GitHub Actions 자동 수집 스케줄러 (2시간 주기 실행)
 ├── src/                        # 핵심 파이썬 소스코드 패키지
 │   ├── db/                     # DB 관리 계층 (RealEstateDB)
-│   ├── collector/              # 공공데이터포털 API 수집 및 롤링 적재 계층
-│   └── dashboard/              # Streamlit 인터랙티브 시각화 대시보드 (app.py)
+│   │   └── db_manager.py
+│   └── collector/              # 공공데이터포털 API 수집 및 롤링 적재 계층
+│       └── collector.py
 ├── tests/                      # 자동화 테스트 슈트
 │   ├── test_db.py              # SQLite DB 멱등성 및 스키마 단위 테스트
 │   ├── test_collector.py       # 수집기 날짜 롤링 및 필터링 단위 테스트
@@ -22,6 +23,7 @@ my_real_estate/
 │   └── test_api.py             # API 연동 및 전처리 단위 테스트
 ├── data/
 │   └── transactions.db         # SQLite 실거래가 데이터베이스 파일
+├── app.py                      # ⭐ Streamlit 인터랙티브 시각화 대시보드 (메인 앱)
 ├── setting.yml                 # 수집 대상 기간, 지역, 전용면적(타입), 관심단지, DB 설정 파일
 ├── requirements.txt            # Python 의존성 패키지
 └── README.md                   # 설정 및 배포 가이드
@@ -97,7 +99,7 @@ storage:
 
 ### 5단계: Streamlit Cloud 무료 배포
 1. [Streamlit Community Cloud](https://share.streamlit.io/) 접속 후 GitHub 계정 로그인
-2. **"New app"** 클릭 후 대상 저장소, 브랜치(`main`), 파일 경로(`src/dashboard/app.py`) 지정
+2. **"New app"** 클릭 후 대상 저장소, 브랜치(`main`), 파일 경로(`app.py`) 지정
 3. **Deploy!** 클릭 시 전용 URL로 웹 대시보드가 상시 배포됩니다.
 
 ---
@@ -130,5 +132,5 @@ python -m src.collector.collector
 
 ### 5. Streamlit 로컬 웹 대시보드 실행
 ```bash
-streamlit run src/dashboard/app.py
+streamlit run app.py
 ```

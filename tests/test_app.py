@@ -15,15 +15,15 @@ class TestAppDashboard(unittest.TestCase):
         self.total_count = self.db.get_count()
 
     def test_app_loads_without_exception(self):
-        """src/dashboard/app.py 가 예외 없이 정상 로드 및 렌더링되는지 검증"""
-        app_file = os.path.join(self.project_root, "src/dashboard/app.py")
+        """루트 app.py 가 예외 없이 정상 로드 및 렌더링되는지 검증"""
+        app_file = os.path.join(self.project_root, "app.py")
         at = AppTest.from_file(app_file, default_timeout=15)
         at.run()
-        self.assertFalse(at.exception, f"src/dashboard/app.py 실행 중 예외 발생: {at.exception}")
+        self.assertFalse(at.exception, f"app.py 실행 중 예외 발생: {at.exception}")
 
     def test_app_filters_interaction(self):
         """사이드바 필터 및 멀티셀렉트 상호작용 검증"""
-        app_file = os.path.join(self.project_root, "src/dashboard/app.py")
+        app_file = os.path.join(self.project_root, "app.py")
         at = AppTest.from_file(app_file, default_timeout=15)
         at.run()
 
@@ -36,7 +36,7 @@ class TestAppDashboard(unittest.TestCase):
 
     def test_dark_mode_css_and_summary_box(self):
         """다크모드 호환 CSS 클래스 및 Tab 5 요약 박스 렌더링 무결성 검증"""
-        app_file = os.path.join(self.project_root, "src/dashboard/app.py")
+        app_file = os.path.join(self.project_root, "app.py")
         at = AppTest.from_file(app_file, default_timeout=15)
         at.run()
 
