@@ -295,7 +295,7 @@ def main():
             f"""<div class="metric-card">
                 <div class="metric-title">평균 실거래가</div>
                 <div class="metric-value">{format_korean_currency(avg_price)}</div>
-                <div class="metric-sub">약 {avg_price:,.0f} 만원</div>
+                <div class="metric-sub">계약 기준 평균</div>
             </div>""",
             unsafe_allow_html=True,
         )
@@ -304,7 +304,7 @@ def main():
             f"""<div class="metric-card">
                 <div class="metric-title">중위 실거래가</div>
                 <div class="metric-value">{format_korean_currency(median_price)}</div>
-                <div class="metric-sub">약 {median_price:,.0f} 만원</div>
+                <div class="metric-sub">중앙값 (50% 지점)</div>
             </div>""",
             unsafe_allow_html=True,
         )
@@ -312,7 +312,7 @@ def main():
         st.markdown(
             f"""<div class="metric-card">
                 <div class="metric-title">평균 평당가 (3.3㎡)</div>
-                <div class="metric-value">{avg_pyeong_price:,.0f} <span style="font-size:16px;font-weight:normal;">만원</span></div>
+                <div class="metric-value">{int(round(avg_pyeong_price)):,} <span style="font-size:16px;font-weight:normal;">만원</span></div>
                 <div class="metric-sub">전용면적 기준</div>
             </div>""",
             unsafe_allow_html=True,
@@ -321,7 +321,7 @@ def main():
         st.markdown(
             f"""<div class="metric-card">
                 <div class="metric-title">최고 거래가</div>
-                <div class="metric-value" style="color:#d90429;">{format_korean_currency(max_price)}</div>
+                <div class="metric-value" style="color:#ef4444;">{format_korean_currency(max_price)}</div>
                 <div class="metric-sub">{max_apt_desc}</div>
             </div>""",
             unsafe_allow_html=True,
@@ -377,12 +377,12 @@ def main():
             apt_df = filtered_df[filtered_df["aptNm"] == apt].sort_values("dealDate")
             color = complex_color_map.get(apt, "#3b82f6")
 
-            # 1. 단지별 실거래 산점도
+            # 1. 단지별 실거래 산점도 (중복 표기 제거 & 정수 만원 포맷)
             hover_text = [
                 f"<b>{row['aptNm']}</b> ({row['regionName']})<br>"
                 f"거래일: {row['dealDate'].strftime('%Y-%m-%d') if pd.notna(row['dealDate']) else ''}<br>"
-                f"거래금액: <b>{format_korean_currency(row['dealAmount'])}</b> ({row['dealAmount']:,}만원)<br>"
-                f"평당가: {row.get('pyeongPrice', 0):,.0f}만원/평<br>"
+                f"거래금액: <b>{format_korean_currency(row['dealAmount'])}</b><br>"
+                f"평당가: {int(round(row.get('pyeongPrice', 0))):,}만원/평<br>"
                 f"층수: {row.get('floor', '-')}층 | 전용: {row.get('excluUseAr', '-')}㎡<br>"
                 f"건축년도: {row.get('buildYear', '-')}년"
                 + (f"<br><span style='color:red;'>⚠️ 해제/취소: {row.get('cdealDay', '')}</span>" if row.get('isCanceled') else "")
@@ -429,7 +429,7 @@ def main():
                 line_dash="dash",
                 line_color="#1d3557",
                 line_width=2,
-                annotation_text=f"전체 평균가: {format_korean_currency(avg_price)} ({avg_price:,.0f}만원)",
+                annotation_text=f"전체 평균가: {format_korean_currency(avg_price)}",
                 annotation_position="top right",
                 annotation_font=dict(size=12, color="#1d3557", weight="bold"),
             )
@@ -447,10 +447,10 @@ def main():
         st.plotly_chart(fig_trend, use_container_width=True)
 
     # ---------------------------------------------------------
-    # TAB 2: 단지별 평당 평균 가격 비교 (가로형 막대그래프 통합)
+    # TAB 2: 단지별 평당 평균 가격 비교 (동적 축 스케일링 적용)
     # ---------------------------------------------------------
     with tab2:
-        st.subheader("🏢 단지별 3.3㎡(평)당 평균 가격 및 실거래가 비교 (가로형 차트)")
+        st.subheader("🏢 단지별 3.3㎡(평)당 평균 가격 및 실거래가 비교 (차이 강조형 가로 차트)")
 
         complex_agg = (
             filtered_df.groupby(["regionName", "aptNm"])
@@ -469,9 +469,15 @@ def main():
 
         bar_colors = [complex_color_map.get(apt, "#3b82f6") for apt in complex_agg["aptNm"]]
 
+        # 0부터 시작하지 않고 최솟값의 85% 지점부터 시작하여 단지 간 차이 극대화
+        min_pyeong = complex_agg["평균평당가"].min() if not complex_agg.empty else 0
+        max_pyeong = complex_agg["평균평당가"].max() if not complex_agg.empty else 0
+        x_min_p = max(0, int(min_pyeong * 0.85))
+        x_max_p = int(max_pyeong * 1.06)
+
         fig_hbar = go.Figure()
 
-        # 평당가 막대 (단지별 일관 고유 색상 적용)
+        # 평당가 막대 (정수 만원 표기 및 중복 제거)
         fig_hbar.add_trace(
             go.Bar(
                 y=complex_agg["aptNm"],
@@ -483,17 +489,17 @@ def main():
                     line=dict(color="#1d3557", width=1),
                 ),
                 text=[
-                    f"평당 {p:,.0f}만 | 평균 {format_korean_currency(a)} ({c}건)"
+                    f"평당 {int(round(p)):,}만원 | 평균 {format_korean_currency(a)} ({c}건)"
                     for p, a, c in zip(complex_agg["평균평당가"], complex_agg["평균거래가"], complex_agg["거래건수"])
                 ],
                 textposition="auto",
                 hoverinfo="text",
                 hovertext=[
                     f"<b>{row['aptNm']}</b> ({row['regionName']})<br>"
-                    f"평균 평당가: <b>{row['평균평당가']:,.1f} 만원/평</b><br>"
-                    f"평균 거래가: {format_korean_currency(row['평균거래가'])} ({row['평균거래가']:,.0f}만원)<br>"
+                    f"평균 평당가: <b>{int(round(row['평균평당가'])):,} 만원/평</b><br>"
+                    f"평균 거래가: {format_korean_currency(row['평균거래가'])}<br>"
                     f"최고 거래가: {format_korean_currency(row['최고거래가'])}<br>"
-                    f"거래건수: {row['거래건수']}건 | 준공: 약 {row['평균건축년도']:.0f}년"
+                    f"거래건수: {row['거래건수']}건 | 준공: 약 {int(round(row['평균건축년도']))}년"
                     for _, row in complex_agg.iterrows()
                 ],
             )
@@ -505,18 +511,18 @@ def main():
             line_dash="dash",
             line_color="#e63946",
             line_width=2,
-            annotation_text=f"전체 평균 평당가: {avg_pyeong_price:,.0f}만원/평",
+            annotation_text=f"전체 평균 평당가: {int(round(avg_pyeong_price)):,}만원/평",
             annotation_position="top right",
         )
 
         chart_height = max(450, len(complex_agg) * 34 + 100)
         fig_hbar.update_layout(
-            title="단지별 평당 평균 가격 랭킹 (단지별 일관 고유 색상 적용)",
+            title="단지별 평당 평균 가격 랭킹 (차이 식별 최적화 축 스케일링)",
             xaxis_title="3.3㎡(평)당 평균 가격 (만원/평)",
             yaxis_title="아파트 단지명",
             template="plotly_white",
             height=chart_height,
-            xaxis=dict(tickformat=","),
+            xaxis=dict(range=[x_min_p, x_max_p], tickformat=","),
             margin=dict(l=150, r=40, t=50, b=50),
         )
         st.plotly_chart(fig_hbar, use_container_width=True)
@@ -541,7 +547,7 @@ def main():
             st.markdown(
                 f"""<div class="insight-box">
                 💡 <b>층수 가격 영향력 통계 분석 결과:</b><br>
-                • 층수가 <b>1층 높아질 때마다 평균 약 +{slope:,.0f}만원</b>의 프리미엄이 형성됩니다. (전체 기준)<br>
+                • 층수가 <b>1층 높아질 때마다 평균 약 +{int(round(slope)):,}만원</b>의 프리미엄이 형성됩니다. (전체 기준)<br>
                 • 상관계수(r): <b>{r_value:.3f}</b> ({strength}, 결정계수 R² = {r_squared:.3f})
                 </div>""",
                 unsafe_allow_html=True,
@@ -566,12 +572,15 @@ def main():
             st.plotly_chart(fig_floor_all, use_container_width=True)
 
         with col_f2:
-            # 단지별 층수 그룹(저층/중층/고층) 평균 가격 비교
+            # 단지별 층수 그룹(저층/중층/고층) 평균 가격 비교 (동적 Y축 스케일링)
             floor_group_summary = (
                 filtered_df.groupby(["aptNm", "floorGroup"])["dealAmount"]
                 .mean()
                 .reset_index()
             )
+            min_floor_pr = floor_group_summary["dealAmount"].min() if not floor_group_summary.empty else 0
+            max_floor_pr = floor_group_summary["dealAmount"].max() if not floor_group_summary.empty else 0
+
             fig_floor_group = px.bar(
                 floor_group_summary,
                 x="aptNm",
@@ -579,11 +588,15 @@ def main():
                 color="floorGroup",
                 barmode="group",
                 color_discrete_sequence=["#93c5fd", "#3b82f6", "#1e3a8a"],
-                title="단지별 층수 구간(저층/중층/고층) 평균 가격 비교",
+                title="단지별 층수 구간(저층/중층/고층) 평균 가격 비교 (차이 강조형)",
                 labels={"aptNm": "단지명", "dealAmount": "평균 거래가 (만원)", "floorGroup": "층수 구간"},
                 template="plotly_white",
+                text=floor_group_summary["dealAmount"].apply(lambda x: f"{int(round(x)):,}만"),
             )
-            fig_floor_group.update_layout(height=420, yaxis=dict(tickformat=","))
+            fig_floor_group.update_layout(
+                height=420,
+                yaxis=dict(range=[max(0, int(min_floor_pr * 0.85)), int(max_floor_pr * 1.06)], tickformat=","),
+            )
             st.plotly_chart(fig_floor_group, use_container_width=True)
 
         # 단지별 층수 회귀 상세 분석 테이블
@@ -596,7 +609,7 @@ def main():
                 apt_floor_stats.append({
                     "단지명": apt,
                     "거래건수": len(sub),
-                    "층당 가격 변동액": f"{sl:+,.0f} 만원/층",
+                    "층당 가격 변동액": f"{int(round(sl)):+,} 만원/층",
                     "상관계수 (r)": f"{r:.3f}",
                     "저층(1~5층) 평균": format_korean_currency(sub[sub["floor"] <= 5]["dealAmount"].mean()),
                     "고층(16층+) 평균": format_korean_currency(sub[sub["floor"] >= 16]["dealAmount"].mean()),
@@ -606,7 +619,7 @@ def main():
 
         st.markdown("---")
 
-        # 2. 준공연도 + 거래월별 세분화 차트
+        # 2. 준공연도 + 거래월별 세분화 차트 (동적 축 스케일링)
         st.markdown("#### 2️⃣ 건축년도(준공연도) × 거래월(계약월) 세분화 평균 실거래가")
 
         if "buildYear" in filtered_df.columns and "dealYM" in filtered_df.columns:
@@ -618,6 +631,9 @@ def main():
             )
             build_monthly_agg["buildYear_label"] = build_monthly_agg["buildYear"].astype(str) + "년 준공"
 
+            min_b_val = build_monthly_agg["mean"].min() if not build_monthly_agg.empty else 0
+            max_b_val = build_monthly_agg["mean"].max() if not build_monthly_agg.empty else 0
+
             fig_build_monthly = px.bar(
                 build_monthly_agg,
                 y="buildYear_label",
@@ -625,14 +641,14 @@ def main():
                 color="dealYM",
                 barmode="group",
                 orientation="h",
-                title="준공연도별 월별 실거래가 추이 (우측으로 길어지는 가로형 그룹 차트)",
+                title="준공연도별 월별 실거래가 추이 (차이 식별 최적화)",
                 labels={"buildYear_label": "준공연도", "mean": "평균 거래가 (만원)", "dealYM": "거래 계약월"},
                 template="plotly_white",
-                text=build_monthly_agg["mean"].apply(lambda x: f"{x:,.0f}만"),
+                text=build_monthly_agg["mean"].apply(lambda x: f"{int(round(x)):,}만"),
             )
             fig_build_monthly.update_layout(
                 height=max(450, len(build_monthly_agg["buildYear"].unique()) * 60 + 100),
-                xaxis=dict(tickformat=","),
+                xaxis=dict(range=[max(0, int(min_b_val * 0.85)), int(max_b_val * 1.08)], tickformat=","),
             )
             st.plotly_chart(fig_build_monthly, use_container_width=True)
 
@@ -693,9 +709,11 @@ def main():
                 )
                 .reset_index()
             )
-            reg_stat["평균가(한글)"] = reg_stat["평균가"].apply(format_korean_currency)
-            reg_stat["중위값(한글)"] = reg_stat["중위값"].apply(format_korean_currency)
-            reg_stat["최고가(한글)"] = reg_stat["최고가"].apply(format_korean_currency)
+            reg_stat["평균가"] = reg_stat["평균가"].apply(format_korean_currency)
+            reg_stat["중위값"] = reg_stat["중위값"].apply(format_korean_currency)
+            reg_stat["최저가"] = reg_stat["최저가"].apply(format_korean_currency)
+            reg_stat["최고가"] = reg_stat["최고가"].apply(format_korean_currency)
+            reg_stat["표준편차"] = reg_stat["표준편차"].apply(lambda x: f"±{int(round(x)):,}만원" if pd.notna(x) else "-")
             st.dataframe(reg_stat, use_container_width=True, hide_index=True)
 
         else: # 🏢 아파트 단지별 보기
@@ -738,18 +756,19 @@ def main():
             apt_detail_stats = []
             for apt, grp in filtered_df.groupby("aptNm"):
                 latest_date = grp["dealDate"].max().strftime("%Y-%m-%d") if pd.notna(grp["dealDate"].max()) else "-"
+                avg_py = int(round(grp['pyeongPrice'].mean())) if "pyeongPrice" in grp and pd.notna(grp['pyeongPrice'].mean()) else 0
                 apt_detail_stats.append({
                     "단지명": apt,
                     "지역": grp["regionName"].iloc[0],
                     "거래건수": len(grp),
-                    "평균 평당가": f"{grp['pyeongPrice'].mean():,.0f}만원/평" if "pyeongPrice" in grp else "-",
+                    "평균 평당가": f"{avg_py:,}만원/평" if avg_py > 0 else "-",
                     "평균 거래가": format_korean_currency(grp["dealAmount"].mean()),
                     "중위 거래가 (Q2)": format_korean_currency(grp["dealAmount"].median()),
                     "하위 25% (Q1)": format_korean_currency(grp["dealAmount"].quantile(0.25)),
                     "상위 75% (Q3)": format_korean_currency(grp["dealAmount"].quantile(0.75)),
                     "최고 거래가": format_korean_currency(grp["dealAmount"].max()),
                     "최저 거래가": format_korean_currency(grp["dealAmount"].min()),
-                    "가격 표준편차": f"±{grp['dealAmount'].std():,.0f}만원" if pd.notna(grp["dealAmount"].std()) else "-",
+                    "가격 표준편차": f"±{int(round(grp['dealAmount'].std())):,}만원" if pd.notna(grp["dealAmount"].std()) else "-",
                     "최근 거래일": latest_date,
                 })
             
