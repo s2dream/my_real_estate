@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from scipy import stats
 from db_manager import RealEstateDB
 
@@ -358,27 +359,90 @@ def main():
     ])
 
     # ---------------------------------------------------------
-    # TAB 1: 시계열 산점도 + 단지별 이동평균 추세선 & 중심축
+    # TAB 1: 시계열 가격 추이 & 단지별 추세선 (고급 심층 분석)
     # ---------------------------------------------------------
     with tab1:
-        st.subheader("계약일자별 실거래가 및 단지별 이동평균선")
+        st.subheader("📈 시계열 실거래가 추이 및 단지별 가격 모멘텀 심층 분석")
 
-        c1, c2 = st.columns([1, 1])
+        # 1. 단지별 가격 변동률 & 모멘텀 요약 카드
+        st.markdown("##### 🎯 주요 단지별 가격 변동률 및 시세 모멘텀")
+        momentum_cols = st.columns(min(4, max(1, len(filtered_df["aptNm"].unique()))))
+        
+        for i, apt in enumerate(filtered_df["aptNm"].unique()):
+            col_target = momentum_cols[i % len(momentum_cols)]
+            apt_data = filtered_df[filtered_df["aptNm"] == apt].sort_values("dealDate")
+            
+            if not apt_data.empty:
+                first_deal = apt_data.iloc[0]["dealAmount"]
+                last_deal = apt_data.iloc[-1]["dealAmount"]
+                change_rate = ((last_deal - first_deal) / first_deal * 100) if first_deal > 0 else 0
+                max_d = apt_data["dealAmount"].max()
+                min_d = apt_data["dealAmount"].min()
+                total_cnt = len(apt_data)
+                
+                # 신고가 건수
+                cum_max = apt_data["dealAmount"].cummax()
+                ath_cnt = (apt_data["dealAmount"] == cum_max).sum()
+                
+                color_badge = "#ef4444" if change_rate > 0 else "#0ea5e9" if change_rate < 0 else "#64748b"
+                sign_str = "+" if change_rate > 0 else ""
+                
+                with col_target:
+                    st.markdown(
+                        f"""
+                        <div class="metric-card" style="border-top: 4px solid {complex_color_map.get(apt, '#3b82f6')};">
+                            <div class="metric-title" style="font-weight:bold; font-size:14px; color:var(--text-color);">{apt}</div>
+                            <div style="font-size:20px; font-weight:bold; color:{color_badge}; margin: 4px 0;">
+                                {sign_str}{change_rate:.1f}% 
+                                <span style="font-size:12px; color:var(--text-color); font-weight:normal;">(기간 변동률)</span>
+                            </div>
+                            <div class="metric-sub">
+                                • 최근 거래: <b>{format_korean_currency(last_deal)}</b><br>
+                                • 변동폭: {format_korean_currency(min_d)} ~ {format_korean_currency(max_d)}<br>
+                                • 총 {total_cnt}건 (🌟 신고가 갱신 {ath_cnt}회)
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+        # 2. 차트 컨트롤 옵션 바
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
-            show_ma = st.checkbox("단지별 7일 이동평균 추세선 표시", value=True)
+            show_ma = st.checkbox("단지별 7일 이동평균 추세선", value=True)
         with c2:
-            show_mean_line = st.checkbox(f"전체 평균 가격 중심축 ({format_korean_currency(avg_price)}) 표시", value=True)
+            show_ath = st.checkbox("🌟 신고가 갱신 거래 하이라이트", value=True)
+        with c3:
+            show_volume = st.checkbox("📊 거래량(건수) 서브플롯 결합", value=True)
+        with c4:
+            show_mean_line = st.checkbox("전체 평균 가격 중심축 표시", value=True)
 
-        fig_trend = go.Figure()
+        # 3. Plotly 시계열 결합 차트 생성 (거래량 서브플롯 포함)
+        if show_volume:
+            fig_trend = make_subplots(
+                rows=2,
+                cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.06,
+                subplot_titles=("계약일자별 실거래가 및 단지별 이동평균선", "일별 거래량 (건수)"),
+                row_heights=[0.75, 0.25],
+            )
+        else:
+            fig_trend = go.Figure()
 
         unique_apts = filtered_df["aptNm"].unique()
 
         for apt in unique_apts:
-            apt_df = filtered_df[filtered_df["aptNm"] == apt].sort_values("dealDate")
+            apt_df = filtered_df[filtered_df["aptNm"] == apt].sort_values("dealDate").copy()
             color = complex_color_map.get(apt, "#3b82f6")
 
-            # 1. 단지별 실거래 산점도 (중복 표기 제거 & 정수 만원 포맷)
-            hover_text = [
+            # 신고가(누적 최고가) 판별
+            apt_df["cummax"] = apt_df["dealAmount"].cummax()
+            apt_df["is_ath"] = (apt_df["dealAmount"] == apt_df["cummax"]) & (apt_df["dealAmount"] > apt_df["dealAmount"].shift(1).fillna(0))
+
+            # 일반 실거래 점
+            normal_df = apt_df[~apt_df["is_ath"]] if show_ath else apt_df
+            hover_text_normal = [
                 f"<b>{row['aptNm']}</b> ({row['regionName']})<br>"
                 f"거래일: {row['dealDate'].strftime('%Y-%m-%d') if pd.notna(row['dealDate']) else ''}<br>"
                 f"거래금액: <b>{format_korean_currency(row['dealAmount'])}</b><br>"
@@ -386,64 +450,154 @@ def main():
                 f"층수: {row.get('floor', '-')}층 | 전용: {row.get('excluUseAr', '-')}㎡<br>"
                 f"건축년도: {row.get('buildYear', '-')}년"
                 + (f"<br><span style='color:red;'>⚠️ 해제/취소: {row.get('cdealDay', '')}</span>" if row.get('isCanceled') else "")
-                for _, row in apt_df.iterrows()
+                for _, row in normal_df.iterrows()
             ]
 
-            fig_trend.add_trace(
-                go.Scatter(
-                    x=apt_df["dealDate"],
-                    y=apt_df["dealAmount"],
-                    mode="markers",
-                    name=f"{apt} (실거래)",
-                    marker=dict(
-                        size=9,
-                        color=color,
-                        opacity=0.75,
-                        line=dict(width=1, color="white"),
-                    ),
-                    text=hover_text,
-                    hoverinfo="text",
-                )
+            trace_scatter = go.Scatter(
+                x=normal_df["dealDate"],
+                y=normal_df["dealAmount"],
+                mode="markers",
+                name=f"{apt}",
+                marker=dict(
+                    size=9,
+                    color=color,
+                    opacity=0.75,
+                    line=dict(width=1, color="white"),
+                ),
+                text=hover_text_normal,
+                hoverinfo="text",
             )
 
-            # 2. 단지별 7일 롤링 이동평균선
+            if show_volume:
+                fig_trend.add_trace(trace_scatter, row=1, col=1)
+            else:
+                fig_trend.add_trace(trace_scatter)
+
+            # 🌟 신고가 갱신 거래 마커
+            if show_ath:
+                ath_df = apt_df[apt_df["is_ath"]]
+                if not ath_df.empty:
+                    hover_text_ath = [
+                        f"🌟 <b>{row['aptNm']} [신고가 갱신!]</b><br>"
+                        f"거래일: {row['dealDate'].strftime('%Y-%m-%d') if pd.notna(row['dealDate']) else ''}<br>"
+                        f"신고가 금액: <b style='color:#ef4444;'>{format_korean_currency(row['dealAmount'])}</b><br>"
+                        f"평당가: {int(round(row.get('pyeongPrice', 0))):,}만원/평<br>"
+                        f"층수: {row.get('floor', '-')}층 | 전용: {row.get('excluUseAr', '-')}㎡"
+                        for _, row in ath_df.iterrows()
+                    ]
+                    trace_ath = go.Scatter(
+                        x=ath_df["dealDate"],
+                        y=ath_df["dealAmount"],
+                        mode="markers",
+                        name=f"{apt} (🌟 신고가)",
+                        marker=dict(
+                            symbol="star-diamond",
+                            size=14,
+                            color="#ffd700",
+                            line=dict(width=2, color="#ef4444"),
+                        ),
+                        text=hover_text_ath,
+                        hoverinfo="text",
+                    )
+                    if show_volume:
+                        fig_trend.add_trace(trace_ath, row=1, col=1)
+                    else:
+                        fig_trend.add_trace(trace_ath)
+
+            # 2. 단지별 7일 이동평균 추세선
             if show_ma and len(apt_df) >= 2:
                 apt_daily = apt_df.groupby("dealDate")["dealAmount"].mean().reset_index().sort_values("dealDate")
                 apt_daily["MA7"] = apt_daily["dealAmount"].rolling(window=7, min_periods=1).mean()
 
-                fig_trend.add_trace(
-                    go.Scatter(
-                        x=apt_daily["dealDate"],
-                        y=apt_daily["MA7"],
-                        mode="lines",
-                        name=f"{apt} (7일 이동평균)",
-                        line=dict(color=color, width=2.5),
-                        hoverinfo="skip",
-                    )
+                trace_ma = go.Scatter(
+                    x=apt_daily["dealDate"],
+                    y=apt_daily["MA7"],
+                    mode="lines",
+                    name=f"{apt} (7일 이동평균)",
+                    line=dict(color=color, width=2.5),
+                    hoverinfo="skip",
+                )
+                if show_volume:
+                    fig_trend.add_trace(trace_ma, row=1, col=1)
+                else:
+                    fig_trend.add_trace(trace_ma)
+
+            # 3. 하단 거래량 바 차트
+            if show_volume:
+                daily_vol = apt_df.groupby("dealDate").size().reset_index(name="volume")
+                trace_vol = go.Bar(
+                    x=daily_vol["dealDate"],
+                    y=daily_vol["volume"],
+                    name=f"{apt} (거래량)",
+                    marker=dict(color=color, opacity=0.6),
+                    hoverinfo="x+y",
+                )
+                fig_trend.add_trace(trace_vol, row=2, col=1)
+
+        # 4. 전체 평균 가격 중심선
+        if show_mean_line:
+            if show_volume:
+                fig_trend.add_hline(
+                    y=avg_price,
+                    line_dash="dash",
+                    line_color="#1d3557",
+                    line_width=2,
+                    annotation_text=f"전체 평균가: {format_korean_currency(avg_price)}",
+                    annotation_position="top right",
+                    annotation_font=dict(size=12, color="#1d3557", weight="bold"),
+                    row=1,
+                    col=1,
+                )
+            else:
+                fig_trend.add_hline(
+                    y=avg_price,
+                    line_dash="dash",
+                    line_color="#1d3557",
+                    line_width=2,
+                    annotation_text=f"전체 평균가: {format_korean_currency(avg_price)}",
+                    annotation_position="top right",
+                    annotation_font=dict(size=12, color="#1d3557", weight="bold"),
                 )
 
-        # 3. 전체 평균 가격 중심축 (수평 기준선)
-        if show_mean_line:
-            fig_trend.add_hline(
-                y=avg_price,
-                line_dash="dash",
-                line_color="#1d3557",
-                line_width=2,
-                annotation_text=f"전체 평균가: {format_korean_currency(avg_price)}",
-                annotation_position="top right",
-                annotation_font=dict(size=12, color="#1d3557", weight="bold"),
-            )
-
+        # 5. X축 퀵 줌(Range Selector) 및 반응형 레이아웃 설정
         fig_trend.update_layout(
-            title="단지별 실거래가 분포 및 단지별 이동평균 추세선 (단지 고유 색상 적용)",
-            xaxis_title="계약 체결일",
-            yaxis_title="거래금액 (만원)",
-            yaxis=dict(tickformat=","),
             template="plotly_white",
-            height=540,
+            height=600 if show_volume else 520,
             hovermode="closest",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(t=50, b=40, l=60, r=40),
         )
+
+        # 상단 가격 Y축 포맷
+        if show_volume:
+            fig_trend.update_yaxes(title_text="거래금액 (만원)", tickformat=",", row=1, col=1)
+            fig_trend.update_yaxes(title_text="건수", row=2, col=1)
+            fig_trend.update_xaxes(
+                rangeselector=dict(
+                    buttons=list([
+                        dict(count=1, label="1개월", step="month", stepmode="backward"),
+                        dict(count=3, label="3개월", step="month", stepmode="backward"),
+                        dict(count=6, label="6개월", step="month", stepmode="backward"),
+                        dict(step="all", label="전체"),
+                    ])
+                ),
+                row=2,
+                col=1,
+            )
+        else:
+            fig_trend.update_yaxes(title_text="거래금액 (만원)", tickformat=",")
+            fig_trend.update_xaxes(
+                title_text="계약 체결일",
+                rangeselector=dict(
+                    buttons=list([
+                        dict(count=1, label="1개월", step="month", stepmode="backward"),
+                        dict(count=3, label="3개월", step="month", stepmode="backward"),
+                        dict(count=6, label="6개월", step="month", stepmode="backward"),
+                        dict(step="all", label="전체"),
+                    ])
+                ),
+            )
+
         st.plotly_chart(fig_trend, use_container_width=True)
 
     # ---------------------------------------------------------
