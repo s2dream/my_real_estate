@@ -423,8 +423,7 @@ def main():
                 rows=2,
                 cols=1,
                 shared_xaxes=True,
-                vertical_spacing=0.06,
-                subplot_titles=("계약일자별 실거래가 및 단지별 이동평균선", "일별 거래량 (건수)"),
+                vertical_spacing=0.10,
                 row_heights=[0.75, 0.25],
             )
         else:
@@ -458,6 +457,8 @@ def main():
                 y=normal_df["dealAmount"],
                 mode="markers",
                 name=f"{apt}",
+                legendgroup=apt,
+                showlegend=True,
                 marker=dict(
                     size=9,
                     color=color,
@@ -473,7 +474,7 @@ def main():
             else:
                 fig_trend.add_trace(trace_scatter)
 
-            # 🌟 신고가 갱신 거래 마커
+            # 🌟 신고가 갱신 거래 마커 (범례 겹침 방지: showlegend=False)
             if show_ath:
                 ath_df = apt_df[apt_df["is_ath"]]
                 if not ath_df.empty:
@@ -489,7 +490,9 @@ def main():
                         x=ath_df["dealDate"],
                         y=ath_df["dealAmount"],
                         mode="markers",
-                        name=f"{apt} (🌟 신고가)",
+                        name=f"{apt} (신고가)",
+                        legendgroup=apt,
+                        showlegend=False,
                         marker=dict(
                             symbol="star-diamond",
                             size=14,
@@ -504,7 +507,7 @@ def main():
                     else:
                         fig_trend.add_trace(trace_ath)
 
-            # 2. 단지별 7일 이동평균 추세선
+            # 2. 단지별 7일 이동평균 추세선 (범례 겹침 방지: showlegend=False)
             if show_ma and len(apt_df) >= 2:
                 apt_daily = apt_df.groupby("dealDate")["dealAmount"].mean().reset_index().sort_values("dealDate")
                 apt_daily["MA7"] = apt_daily["dealAmount"].rolling(window=7, min_periods=1).mean()
@@ -513,7 +516,9 @@ def main():
                     x=apt_daily["dealDate"],
                     y=apt_daily["MA7"],
                     mode="lines",
-                    name=f"{apt} (7일 이동평균)",
+                    name=f"{apt} (이동평균)",
+                    legendgroup=apt,
+                    showlegend=False,
                     line=dict(color=color, width=2.5),
                     hoverinfo="skip",
                 )
@@ -522,14 +527,16 @@ def main():
                 else:
                     fig_trend.add_trace(trace_ma)
 
-            # 3. 하단 거래량 바 차트
+            # 3. 하단 거래량 바 차트 (범례 겹침 방지: showlegend=False)
             if show_volume:
                 daily_vol = apt_df.groupby("dealDate").size().reset_index(name="volume")
                 trace_vol = go.Bar(
                     x=daily_vol["dealDate"],
                     y=daily_vol["volume"],
                     name=f"{apt} (거래량)",
-                    marker=dict(color=color, opacity=0.6),
+                    legendgroup=apt,
+                    showlegend=False,
+                    marker=dict(color=color, opacity=0.7),
                     hoverinfo="x+y",
                 )
                 fig_trend.add_trace(trace_vol, row=2, col=1)
@@ -542,7 +549,7 @@ def main():
                     line_dash="dash",
                     line_color="#1d3557",
                     line_width=2,
-                    annotation_text=f"전체 평균가: {format_korean_currency(avg_price)}",
+                    annotation_text=f"평균: {format_korean_currency(avg_price)}",
                     annotation_position="top right",
                     annotation_font=dict(size=12, color="#1d3557", weight="bold"),
                     row=1,
@@ -554,47 +561,60 @@ def main():
                     line_dash="dash",
                     line_color="#1d3557",
                     line_width=2,
-                    annotation_text=f"전체 평균가: {format_korean_currency(avg_price)}",
+                    annotation_text=f"평균: {format_korean_currency(avg_price)}",
                     annotation_position="top right",
                     annotation_font=dict(size=12, color="#1d3557", weight="bold"),
                 )
 
-        # 5. X축 퀵 줌(Range Selector) 및 반응형 레이아웃 설정
+        # 5. 깔끔한 레이아웃 및 퀵 줌(Range Selector) 설정
         fig_trend.update_layout(
             template="plotly_white",
-            height=600 if show_volume else 520,
+            height=620 if show_volume else 520,
             hovermode="closest",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(t=50, b=40, l=60, r=40),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.05,
+                xanchor="center",
+                x=0.5,
+                itemclick="toggle",
+                itemdoubleclick="toggleothers",
+            ),
+            margin=dict(t=70, b=40, l=60, r=40),
         )
 
-        # 상단 가격 Y축 포맷
+        # 상단 실거래가 Y축 및 하단 거래량 Y축 레이블 분리
         if show_volume:
-            fig_trend.update_yaxes(title_text="거래금액 (만원)", tickformat=",", row=1, col=1)
-            fig_trend.update_yaxes(title_text="건수", row=2, col=1)
+            fig_trend.update_yaxes(title_text="실거래가 (만원)", tickformat=",", row=1, col=1)
+            fig_trend.update_yaxes(title_text="거래량 (건)", row=2, col=1)
             fig_trend.update_xaxes(
+                title_text="계약 체결일",
+                row=2,
+                col=1,
                 rangeselector=dict(
+                    x=0,
+                    y=1.18,
                     buttons=list([
                         dict(count=1, label="1개월", step="month", stepmode="backward"),
                         dict(count=3, label="3개월", step="month", stepmode="backward"),
                         dict(count=6, label="6개월", step="month", stepmode="backward"),
                         dict(step="all", label="전체"),
-                    ])
+                    ]),
                 ),
-                row=2,
-                col=1,
             )
         else:
-            fig_trend.update_yaxes(title_text="거래금액 (만원)", tickformat=",")
+            fig_trend.update_yaxes(title_text="실거래가 (만원)", tickformat=",")
             fig_trend.update_xaxes(
                 title_text="계약 체결일",
                 rangeselector=dict(
+                    x=0,
+                    y=1.14,
                     buttons=list([
                         dict(count=1, label="1개월", step="month", stepmode="backward"),
                         dict(count=3, label="3개월", step="month", stepmode="backward"),
                         dict(count=6, label="6개월", step="month", stepmode="backward"),
                         dict(step="all", label="전체"),
-                    ])
+                    ]),
                 ),
             )
 
