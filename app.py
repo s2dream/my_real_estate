@@ -5,13 +5,14 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+from scipy import stats
 from db_manager import RealEstateDB
 
 # -------------------------------------------------------------
 # 페이지 기본 설정 & 스타일
 # -------------------------------------------------------------
 st.set_page_config(
-    page_title="스마트 아파트 실거래가 분석 대시보드",
+    page_title="스마트 아파트 실거래가 심층 분석 대시보드",
     page_icon="🏢",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -57,6 +58,15 @@ st.markdown(
         background-color: #e3f2fd;
         color: #1976d2;
         margin-right: 6px;
+    }
+    .insight-box {
+        background-color: #f0f7ff;
+        border-left: 4px solid #3a86ff;
+        padding: 12px 16px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+        font-size: 14px;
+        color: #1e3a8a;
     }
     </style>
     """,
@@ -106,11 +116,29 @@ def load_data():
             pyeong = df["excluUseAr"] / 3.305785
             df["pyeongPrice"] = (df["dealAmount"] / pyeong).round(1)
 
+        # 파생변수: 거래년월 (dealYM: YYYY-MM)
+        if "dealYear" in df.columns and "dealMonth" in df.columns:
+            df["dealYM"] = df["dealYear"].astype(str) + "-" + df["dealMonth"].astype(str).str.zfill(2)
+
         # 파생변수: 취소 여부 불리언
         if "cdealType" in df.columns:
             df["isCanceled"] = df["cdealType"].isin(["O", "0", "취소", "해제"])
         else:
             df["isCanceled"] = False
+
+        # 파생변수: 층수 그룹 (저층: 1~5, 중층: 6~15, 고층: 16+)
+        if "floor" in df.columns:
+            def categorize_floor(fl):
+                if pd.isna(fl):
+                    return "미분류"
+                fl = int(fl)
+                if fl <= 5:
+                    return "1) 저층 (1~5층)"
+                elif fl <= 15:
+                    return "2) 중층 (6~15층)"
+                else:
+                    return "3) 고층/로열 (16층+)"
+            df["floorGroup"] = df["floor"].apply(categorize_floor)
 
         return df
     except Exception as e:
@@ -135,10 +163,7 @@ def main():
     # 동적 메타데이터 계산
     db_regions = sorted(df["regionName"].dropna().unique().tolist())
     region_str = ", ".join(db_regions) if db_regions else "전체 지역"
-    
     start_ym = setting.get("collection", {}).get("start_year_month", "202601")
-    build_cfg = setting.get("collection", {}).get("build_year_filter", {})
-    build_str = f"준공 {build_cfg.get('within_years', 10)}년 이내" if build_cfg.get("enabled", False) else "전체 준공연도"
     area_cfg = setting.get("collection", {}).get("area_filter", {})
     area_str = "84타입 전용" if area_cfg.get("enabled", False) else "전체 면적"
 
@@ -147,7 +172,6 @@ def main():
         <div>
             <span class="badge">📍 대상 지역: {region_str}</span>
             <span class="badge">📐 면적: {area_str}</span>
-            <span class="badge">🏗️ 건축: {build_str}</span>
             <span class="badge">📅 기준: {start_ym[:4]}년 {start_ym[4:]}월 ~ 현재</span>
             <span class="badge">💾 SQLite DB 연동</span>
         </div>
@@ -289,9 +313,9 @@ def main():
     # ---------------------------------------------------------
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 시계열 가격 추이 & 단지별 추세선",
-        "🏢 단지별 랭킹 & 평당가 비교",
-        "층수 & 건축년도별 분석",
-        "📊 거래량 & 가격 분포 통계",
+        "🏢 단지별 평당가 & 실거래가 비교",
+        "층수 & 준공·월별 심층 분석",
+        "📊 거래량 & 가격 분포 (지역/단지별)",
         "📋 실거래 상세 목록",
     ])
 
@@ -347,7 +371,6 @@ def main():
 
             # 2. 단지별 7일 롤링 이동평균선
             if show_ma and len(apt_df) >= 2:
-                # 일별 평균 가격 계산 후 롤링
                 apt_daily = apt_df.groupby("dealDate")["dealAmount"].mean().reset_index().sort_values("dealDate")
                 apt_daily["MA7"] = apt_daily["dealAmount"].rolling(window=7, min_periods=1).mean()
 
@@ -387,198 +410,318 @@ def main():
         st.plotly_chart(fig_trend, use_container_width=True)
 
     # ---------------------------------------------------------
-    # TAB 2: 단지별 랭킹 및 평당가 비교
+    # TAB 2: 단지별 평당 평균 가격 비교 (가로형 막대그래프 통합)
     # ---------------------------------------------------------
     with tab2:
-        st.subheader("아파트 단지별 거래가 및 평당가 비교 랭킹")
+        st.subheader("🏢 단지별 3.3㎡(평)당 평균 가격 및 실거래가 비교 (가로형 차트)")
 
         complex_agg = (
             filtered_df.groupby(["regionName", "aptNm"])
             .agg(
+                평균평당가=("pyeongPrice", "mean"),
                 평균거래가=("dealAmount", "mean"),
                 중위거래가=("dealAmount", "median"),
                 최고거래가=("dealAmount", "max"),
                 최저거래가=("dealAmount", "min"),
-                평균평당가=("pyeongPrice", "mean"),
                 거래건수=("dealAmount", "count"),
                 평균건축년도=("buildYear", lambda x: pd.to_numeric(x, errors="coerce").mean()),
             )
             .reset_index()
-            .sort_values(by="평균거래가", ascending=False)
+            .sort_values(by="평균평당가", ascending=True) # 가로 막대 상단에 높은 값 위치하도록 오름차순 정렬
         )
 
-        c_sort = st.radio("정렬 기준", ["평균 실거래가 높은 순", "평당가(3.3㎡) 높은 순", "최고 거래가 높은 순", "거래량 많은 순"], horizontal=True)
-        if c_sort == "평균 실거래가 높은 순":
-            complex_agg = complex_agg.sort_values(by="평균거래가", ascending=False)
-        elif c_sort == "평당가(3.3㎡) 높은 순":
-            complex_agg = complex_agg.sort_values(by="평균평당가", ascending=False)
-        elif c_sort == "최고 거래가 높은 순":
-            complex_agg = complex_agg.sort_values(by="최고거래가", ascending=False)
-        else:
-            complex_agg = complex_agg.sort_values(by="거래건수", ascending=False)
+        # 가로형 막대그래프 통합 시각화
+        fig_hbar = go.Figure()
 
-        # 단지별 바 차트 (상위 15개 단지)
-        top_complexes = complex_agg.head(15)
-
-        fig_bar_comp = go.Figure()
-        fig_bar_comp.add_trace(
+        # 평당가 막대 (오른쪽으로 길어짐)
+        fig_hbar.add_trace(
             go.Bar(
-                name="평균 거래가 (만원)",
-                x=top_complexes["aptNm"],
-                y=top_complexes["평균거래가"],
-                marker_color="#3a86ff",
-                text=top_complexes["평균거래가"].apply(lambda x: f"{x:,.0f}만"),
+                y=complex_agg["aptNm"],
+                x=complex_agg["평균평당가"],
+                orientation="h",
+                name="평균 평당가 (만원/평)",
+                marker=dict(
+                    color=complex_agg["평균평당가"],
+                    colorscale="Blues",
+                    line=dict(color="#1d3557", width=1),
+                ),
+                text=[
+                    f"평당 {p:,.0f}만 | 평균 {format_korean_currency(a)} ({c}건)"
+                    for p, a, c in zip(complex_agg["평균평당가"], complex_agg["평균거래가"], complex_agg["거래건수"])
+                ],
                 textposition="auto",
+                hoverinfo="text",
+                hovertext=[
+                    f"<b>{row['aptNm']}</b> ({row['regionName']})<br>"
+                    f"평균 평당가: <b>{row['평균평당가']:,.1f} 만원/평</b><br>"
+                    f"평균 거래가: {format_korean_currency(row['평균거래가'])} ({row['평균거래가']:,.0f}만원)<br>"
+                    f"최고 거래가: {format_korean_currency(row['최고거래가'])}<br>"
+                    f"거래건수: {row['거래건수']}건 | 준공: 약 {row['평균건축년도']:.0f}년"
+                    for _, row in complex_agg.iterrows()
+                ],
             )
         )
-        fig_bar_comp.add_trace(
-            go.Bar(
-                name="최고 거래가 (만원)",
-                x=top_complexes["aptNm"],
-                y=top_complexes["최고거래가"],
-                marker_color="#ff006e",
-                text=top_complexes["최고거래가"].apply(lambda x: f"{x:,.0f}만"),
-                textposition="auto",
-            )
-        )
-        fig_bar_comp.update_layout(
-            barmode="group",
-            title="주요 단지별 평균가 vs 최고가 비교 (Top 15)",
-            xaxis_title="단지명",
-            yaxis_title="금액 (만원)",
-            template="plotly_white",
-            height=450,
-            yaxis=dict(tickformat=","),
-        )
-        st.plotly_chart(fig_bar_comp, use_container_width=True)
 
-        # 평당가 차트
-        fig_pyeong = px.bar(
-            top_complexes,
-            x="aptNm",
-            y="평균평당가",
-            color="regionName",
-            title="단지별 3.3㎡(평)당 평균 가격 비교",
-            labels={"aptNm": "단지명", "평균평당가": "평당가 (만원/평)", "regionName": "지역"},
-            text_auto=",.0f",
-            template="plotly_white",
+        # 전체 평균 평당가 수직 중심선
+        fig_hbar.add_vline(
+            x=avg_pyeong_price,
+            line_dash="dash",
+            line_color="#e63946",
+            line_width=2,
+            annotation_text=f"전체 평균 평당가: {avg_pyeong_price:,.0f}만원/평",
+            annotation_position="top right",
         )
-        fig_pyeong.update_layout(height=400)
-        st.plotly_chart(fig_pyeong, use_container_width=True)
+
+        chart_height = max(450, len(complex_agg) * 32 + 100)
+        fig_hbar.update_layout(
+            title="단지별 평당 평균 가격 랭킹 (오른쪽으로 길어지는 가로형 통합 차트)",
+            xaxis_title="3.3㎡(평)당 평균 가격 (만원/평)",
+            yaxis_title="아파트 단지명",
+            template="plotly_white",
+            height=chart_height,
+            xaxis=dict(tickformat=","),
+            margin=dict(l=150, r=40, t=50, b=50),
+        )
+        st.plotly_chart(fig_hbar, use_container_width=True)
 
     # ---------------------------------------------------------
-    # TAB 3: 층수 & 건축년도별 프리미엄 분석
+    # TAB 3: 층수 & 준공·월별 심층 분석
     # ---------------------------------------------------------
     with tab3:
-        st.subheader("층수 및 준공연도에 따른 가격 분포 및 프리미엄")
+        st.subheader("층수 및 준공연도/거래월별 실거래가 심층 분석")
 
-        col_a, col_b = st.columns(2)
+        # 1. 층수 분석 섹션
+        st.markdown("#### 1️⃣ 층수(Floor)와 실거래가 상관관계 및 통계 분석")
+        
+        # 전체 층수 선형회귀 분석 (scipy linregress)
+        valid_floor_df = filtered_df.dropna(subset=["floor", "dealAmount"]).copy()
+        if len(valid_floor_df) >= 3:
+            slope, intercept, r_value, p_value, std_err = stats.linregress(
+                valid_floor_df["floor"], valid_floor_df["dealAmount"]
+            )
+            r_squared = r_value ** 2
+            
+            # 통계적 해석 문구
+            strength = "강한 양의 상관관계" if r_value > 0.4 else "보통 수준의 상관관계" if r_value > 0.15 else "미미한 상관관계"
+            st.markdown(
+                f"""<div class="insight-box">
+                💡 <b>층수 가격 영향력 통계 분석 결과:</b><br>
+                • 층수가 <b>1층 높아질 때마다 평균 약 +{slope:,.0f}만원</b>의 프리미엄이 형성됩니다. (전체 기준)<br>
+                • 상관계수(r): <b>{r_value:.3f}</b> ({strength}, 결정계수 R² = {r_squared:.3f})
+                </div>""",
+                unsafe_allow_html=True,
+            )
 
-        with col_a:
-            if "floor" in filtered_df.columns:
-                # 층수별 산점도 & 추세선
-                fig_floor_scatter = px.scatter(
-                    filtered_df,
-                    x="floor",
-                    y="dealAmount",
-                    color="regionName",
-                    hover_data=["aptNm", "dealDate"],
-                    trendline="ols",
-                    title="층수(Floor) vs 실거래가 상관관계 (저층/로열층 추세선)",
-                    labels={"floor": "층수", "dealAmount": "거래금액 (만원)", "regionName": "지역"},
-                    template="plotly_white",
-                )
-                fig_floor_scatter.update_layout(height=420, yaxis=dict(tickformat=","))
-                st.plotly_chart(fig_floor_scatter, use_container_width=True)
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            # 전체 층수 vs 실거래가 산점도 + 회귀선
+            fig_floor_all = px.scatter(
+                valid_floor_df,
+                x="floor",
+                y="dealAmount",
+                color="regionName",
+                trendline="ols",
+                title="전체 층수 vs 실거래가 상관관계 (회귀 추세선)",
+                labels={"floor": "층수", "dealAmount": "거래금액 (만원)", "regionName": "지역"},
+                template="plotly_white",
+                hover_data=["aptNm", "dealDate"],
+            )
+            fig_floor_all.update_layout(height=420, yaxis=dict(tickformat=","))
+            st.plotly_chart(fig_floor_all, use_container_width=True)
 
-        with col_b:
-            if "buildYear" in filtered_df.columns:
-                # 건축년도별 평균 가격
-                build_summary = (
-                    filtered_df.groupby("buildYear")["dealAmount"]
-                    .agg(["mean", "count"])
-                    .reset_index()
-                    .sort_values("buildYear")
-                )
-                fig_build = px.bar(
-                    build_summary,
-                    x="buildYear",
-                    y="mean",
-                    text_auto=",.0f",
-                    title="건축년도(준공연도)별 평균 실거래가",
-                    labels={"buildYear": "준공연도", "mean": "평균 거래가 (만원)"},
-                    template="plotly_white",
-                    color_discrete_sequence=["#8338ec"],
-                )
-                fig_build.update_layout(height=420, yaxis=dict(tickformat=","))
-                st.plotly_chart(fig_build, use_container_width=True)
+        with col_f2:
+            # 단지별 층수 그룹(저층/중층/고층) 평균 가격 비교
+            floor_group_summary = (
+                filtered_df.groupby(["aptNm", "floorGroup"])["dealAmount"]
+                .mean()
+                .reset_index()
+            )
+            fig_floor_group = px.bar(
+                floor_group_summary,
+                x="aptNm",
+                y="dealAmount",
+                color="floorGroup",
+                barmode="group",
+                title="단지별 층수 구간(저층/중층/고층) 평균 가격 비교",
+                labels={"aptNm": "단지명", "dealAmount": "평균 거래가 (만원)", "floorGroup": "층수 구간"},
+                template="plotly_white",
+            )
+            fig_floor_group.update_layout(height=420, yaxis=dict(tickformat=","))
+            st.plotly_chart(fig_floor_group, use_container_width=True)
+
+        # 단지별 층수 회귀 상세 분석 테이블
+        st.markdown("##### 📋 단지별 층당 가격 상승액 & 상관관계 세부 통계")
+        apt_floor_stats = []
+        for apt in filtered_df["aptNm"].unique():
+            sub = filtered_df[filtered_df["aptNm"] == apt].dropna(subset=["floor", "dealAmount"])
+            if len(sub) >= 3 and sub["floor"].nunique() > 1:
+                sl, _, r, p, _ = stats.linregress(sub["floor"], sub["dealAmount"])
+                apt_floor_stats.append({
+                    "단지명": apt,
+                    "거래건수": len(sub),
+                    "층당 가격 변동액": f"{sl:+,.0f} 만원/층",
+                    "상관계수 (r)": f"{r:.3f}",
+                    "저층(1~5층) 평균": format_korean_currency(sub[sub["floor"] <= 5]["dealAmount"].mean()),
+                    "고층(16층+) 평균": format_korean_currency(sub[sub["floor"] >= 16]["dealAmount"].mean()),
+                })
+        if apt_floor_stats:
+            st.dataframe(pd.DataFrame(apt_floor_stats), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # 2. 준공연도 + 거래월별 세분화 차트
+        st.markdown("#### 2️⃣ 건축년도(준공연도) × 거래월(계약월) 세분화 평균 실거래가")
+
+        if "buildYear" in filtered_df.columns and "dealYM" in filtered_df.columns:
+            build_monthly_agg = (
+                filtered_df.groupby(["buildYear", "dealYM"])["dealAmount"]
+                .agg(["mean", "count"])
+                .reset_index()
+                .sort_values(by=["buildYear", "dealYM"])
+            )
+            build_monthly_agg["buildYear_label"] = build_monthly_agg["buildYear"].astype(str) + "년 준공"
+
+            # 가로형 그룹 막대그래프로 월별 추이 비교
+            fig_build_monthly = px.bar(
+                build_monthly_agg,
+                y="buildYear_label",
+                x="mean",
+                color="dealYM",
+                barmode="group",
+                orientation="h",
+                title="준공연도별 월별 실거래가 추이 (우측으로 길어지는 가로형 그룹 차트)",
+                labels={"buildYear_label": "준공연도", "mean": "평균 거래가 (만원)", "dealYM": "거래 계약월"},
+                template="plotly_white",
+                text=build_monthly_agg["mean"].apply(lambda x: f"{x:,.0f}만"),
+            )
+            fig_build_monthly.update_layout(
+                height=max(450, len(build_monthly_agg["buildYear"].unique()) * 60 + 100),
+                xaxis=dict(tickformat=","),
+            )
+            st.plotly_chart(fig_build_monthly, use_container_width=True)
 
     # ---------------------------------------------------------
-    # TAB 4: 거래량 & 가격 분포 통계
+    # TAB 4: 거래량 & 가격 분포 (지역/단지별 토글 및 세부 통계)
     # ---------------------------------------------------------
     with tab4:
-        st.subheader("월별 거래량 추이 및 가격대 분포 통계")
+        st.subheader("📊 거래량 추이 및 가격대 분포 통계")
 
-        col_m1, col_m2 = st.columns([1, 1])
+        # 보기 모드 선택 (지역별 vs 아파트 단지별)
+        view_mode = st.radio(
+            "분석 기준 선택",
+            ["🌐 지역(구)별 보기", "🏢 아파트 단지별 보기"],
+            horizontal=True,
+        )
 
-        with col_m1:
-            # 월별/지역별 거래량
-            if "dealYear" in filtered_df.columns and "dealMonth" in filtered_df.columns:
-                filtered_df["dealYM"] = filtered_df["dealYear"].astype(str) + "-" + filtered_df["dealMonth"].astype(str).str.zfill(2)
-                vol_by_region = filtered_df.groupby(["dealYM", "regionName"]).size().reset_index(name="거래건수")
-                fig_monthly = px.bar(
-                    vol_by_region,
+        if view_mode == "🌐 지역(구)별 보기":
+            col_v1, col_v2 = st.columns(2)
+            with col_v1:
+                # 지역별 월별 거래량
+                vol_region = filtered_df.groupby(["dealYM", "regionName"]).size().reset_index(name="거래건수")
+                fig_v_r = px.bar(
+                    vol_region,
                     x="dealYM",
                     y="거래건수",
                     color="regionName",
                     barmode="stack",
-                    title="월별/지역별 실거래 건수 추이",
+                    title="지역별 월별 실거래 건수 추이",
                     labels={"dealYM": "계약년월", "거래건수": "거래건수", "regionName": "지역"},
                     text_auto=True,
                     template="plotly_white",
                 )
-                fig_monthly.update_layout(height=420)
-                st.plotly_chart(fig_monthly, use_container_width=True)
+                fig_v_r.update_layout(height=420)
+                st.plotly_chart(fig_v_r, use_container_width=True)
 
-        with col_m2:
-            # 실거래가 히스토그램 (분포도)
-            fig_hist = px.histogram(
-                filtered_df,
-                x="dealAmount",
-                color="regionName",
-                nbins=25,
-                title="실거래 가격대 분포 히스토그램",
-                labels={"dealAmount": "거래금액 (만원)", "regionName": "지역"},
-                template="plotly_white",
-                marginal="box",
+            with col_v2:
+                # 지역별 가격 분포 히스토그램
+                fig_h_r = px.histogram(
+                    filtered_df,
+                    x="dealAmount",
+                    color="regionName",
+                    nbins=25,
+                    title="지역별 실거래가 가격대 분포 (Boxplot 결합)",
+                    labels={"dealAmount": "거래금액 (만원)", "regionName": "지역"},
+                    template="plotly_white",
+                    marginal="box",
+                )
+                fig_h_r.update_layout(height=420, yaxis=dict(tickformat=","), xaxis=dict(tickformat=","))
+                st.plotly_chart(fig_h_r, use_container_width=True)
+
+            # 지역별 요약 통계
+            st.markdown("##### 📋 지역별 가격 통계 요약표")
+            reg_stat = (
+                filtered_df.groupby("regionName")["dealAmount"]
+                .agg(
+                    거래건수="count",
+                    평균가="mean",
+                    중위값="median",
+                    최저가="min",
+                    최고가="max",
+                    표준편차="std",
+                )
+                .reset_index()
             )
-            fig_hist.update_layout(height=420, yaxis=dict(tickformat=","), xaxis=dict(tickformat=","))
-            st.plotly_chart(fig_hist, use_container_width=True)
+            reg_stat["평균가(한글)"] = reg_stat["평균가"].apply(format_korean_currency)
+            reg_stat["중위값(한글)"] = reg_stat["중위값"].apply(format_korean_currency)
+            reg_stat["최고가(한글)"] = reg_stat["최고가"].apply(format_korean_currency)
+            st.dataframe(reg_stat, use_container_width=True, hide_index=True)
 
-        # 통계 요약표
-        st.markdown("#### 📐 주요 가격 통계 요약 (사분위수 & 변동성)")
-        stat_summary = pd.DataFrame({
-            "지표": ["최소 거래가 (Min)", "하위 25% (Q1)", "중위 거래가 (Median / Q2)", "평균 거래가 (Mean)", "상위 75% (Q3)", "최고 거래가 (Max)", "표준편차 (Std)"],
-            "거래금액 (만원)": [
-                f"{filtered_df['dealAmount'].min():,}",
-                f"{filtered_df['dealAmount'].quantile(0.25):,.0f}",
-                f"{filtered_df['dealAmount'].median():,.0f}",
-                f"{filtered_df['dealAmount'].mean():,.0f}",
-                f"{filtered_df['dealAmount'].quantile(0.75):,.0f}",
-                f"{filtered_df['dealAmount'].max():,}",
-                f"{filtered_df['dealAmount'].std():,.0f}",
-            ],
-            "한글 금액": [
-                format_korean_currency(filtered_df['dealAmount'].min()),
-                format_korean_currency(filtered_df['dealAmount'].quantile(0.25)),
-                format_korean_currency(filtered_df['dealAmount'].median()),
-                format_korean_currency(filtered_df['dealAmount'].mean()),
-                format_korean_currency(filtered_df['dealAmount'].quantile(0.75)),
-                format_korean_currency(filtered_df['dealAmount'].max()),
-                "-",
-            ]
-        })
-        st.dataframe(stat_summary, use_container_width=True, hide_index=True)
+        else: # 🏢 아파트 단지별 보기
+            col_v1, col_v2 = st.columns(2)
+            with col_v1:
+                # 단지별 월별 거래량
+                vol_apt = filtered_df.groupby(["dealYM", "aptNm"]).size().reset_index(name="거래건수")
+                fig_v_a = px.bar(
+                    vol_apt,
+                    x="dealYM",
+                    y="거래건수",
+                    color="aptNm",
+                    barmode="stack",
+                    title="단지별 월별 실거래 건수 추이",
+                    labels={"dealYM": "계약년월", "거래건수": "거래건수", "aptNm": "단지명"},
+                    text_auto=True,
+                    template="plotly_white",
+                )
+                fig_v_a.update_layout(height=420)
+                st.plotly_chart(fig_v_a, use_container_width=True)
+
+            with col_v2:
+                # 단지별 박스플롯 가격 분포
+                fig_b_a = px.box(
+                    filtered_df,
+                    x="aptNm",
+                    y="dealAmount",
+                    color="aptNm",
+                    points="all",
+                    title="단지별 실거래가 분포 박스플롯 (개별 거래점 표시)",
+                    labels={"aptNm": "단지명", "dealAmount": "거래금액 (만원)"},
+                    template="plotly_white",
+                )
+                fig_b_a.update_layout(height=420, showlegend=False, yaxis=dict(tickformat=","))
+                st.plotly_chart(fig_b_a, use_container_width=True)
+
+            # 아파트 단지별 세심한 세부 통계 요약표
+            st.markdown("##### 📋 단지별 세부 통계 요약표 (사분위수 & 평당가 & 최근 거래일)")
+            apt_detail_stats = []
+            for apt, grp in filtered_df.groupby("aptNm"):
+                latest_date = grp["dealDate"].max().strftime("%Y-%m-%d") if pd.notna(grp["dealDate"].max()) else "-"
+                apt_detail_stats.append({
+                    "단지명": apt,
+                    "지역": grp["regionName"].iloc[0],
+                    "거래건수": len(grp),
+                    "평균 평당가": f"{grp['pyeongPrice'].mean():,.0f}만원/평" if "pyeongPrice" in grp else "-",
+                    "평균 거래가": format_korean_currency(grp["dealAmount"].mean()),
+                    "중위 거래가 (Q2)": format_korean_currency(grp["dealAmount"].median()),
+                    "하위 25% (Q1)": format_korean_currency(grp["dealAmount"].quantile(0.25)),
+                    "상위 75% (Q3)": format_korean_currency(grp["dealAmount"].quantile(0.75)),
+                    "최고 거래가": format_korean_currency(grp["dealAmount"].max()),
+                    "최저 거래가": format_korean_currency(grp["dealAmount"].min()),
+                    "가격 표준편차": f"±{grp['dealAmount'].std():,.0f}만원" if pd.notna(grp["dealAmount"].std()) else "-",
+                    "최근 거래일": latest_date,
+                })
+            
+            apt_stat_df = pd.DataFrame(apt_detail_stats).sort_values(by="거래건수", ascending=False)
+            st.dataframe(apt_stat_df, use_container_width=True, hide_index=True)
 
     # ---------------------------------------------------------
     # TAB 5: 실거래 상세 목록 & CSV 다운로드
