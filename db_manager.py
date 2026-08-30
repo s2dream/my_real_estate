@@ -55,12 +55,22 @@ class RealEstateDB:
                     dealAmount INTEGER,
                     buildYear TEXT,
                     dealType TEXT,
+                    cdealType TEXT,
+                    cdealDay TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """
             )
 
-            # 2. 복합 UNIQUE 인덱스 생성 (중복 거래 완벽 방지)
+            # 기존 테이블에 cdealType, cdealDay 컬럼이 없는 경우 안전하게 추가 (마이그레이션)
+            cursor.execute(f"PRAGMA table_info({self.TABLE_NAME})")
+            existing_cols = [row[1] for row in cursor.fetchall()]
+            if "cdealType" not in existing_cols:
+                cursor.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN cdealType TEXT")
+            if "cdealDay" not in existing_cols:
+                cursor.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN cdealDay TEXT")
+
+            # 2. 복합 UNIQUE 인덱스 생성 (중복 거래 완벽 방지 & 덮어쓰기)
             cursor.execute(
                 f"""
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_unique
@@ -87,7 +97,7 @@ class RealEstateDB:
         if df.empty:
             return self.get_count(), 0
 
-        # 필수 컬럼 목록 정의
+        # 필수 컬럼 목록 정의 (cdealType, cdealDay 포함)
         columns = [
             "dealDate",
             "dealYear",
@@ -104,6 +114,8 @@ class RealEstateDB:
             "dealAmount",
             "buildYear",
             "dealType",
+            "cdealType",
+            "cdealDay",
         ]
 
         # 데이터프레임에 없는 컬럼은 None으로 보완
@@ -155,7 +167,9 @@ class RealEstateDB:
                     areaType,
                     dealAmount,
                     buildYear,
-                    dealType
+                    dealType,
+                    cdealType,
+                    cdealDay
                 FROM {self.TABLE_NAME}
                 ORDER BY dealDate DESC, dealAmount DESC
             """

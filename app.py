@@ -155,6 +155,18 @@ def main():
                 (filtered_df["dealDate"].dt.date >= start_d) & (filtered_df["dealDate"].dt.date <= end_d)
             ]
 
+    # 5. 거래 취소/해제 필터
+    include_canceled = st.sidebar.checkbox("거래 취소/해제 건 포함", value=False, help="계약 후 해제/취소된 거래를 포함하여 조회합니다.")
+    if "cdealType" in filtered_df.columns:
+        if not include_canceled:
+            # cdealType 이 없거나 빈 문자열, None 인 정상 거래만 필터
+            filtered_df = filtered_df[
+                filtered_df["cdealType"].isna()
+                | (filtered_df["cdealType"] == "")
+                | (filtered_df["cdealType"] == "None")
+                | (filtered_df["cdealType"] == "nan")
+            ]
+
     st.sidebar.markdown("---")
     st.sidebar.caption("💡 Tip: 그래프를 드래그하여 확대하거나 더블클릭하여 원래대로 복원할 수 있습니다.")
 
@@ -332,6 +344,8 @@ def main():
             "floor",
             "buildYear",
             "dealType",
+            "cdealType",
+            "cdealDay",
         ]
         available_display_cols = [c for c in display_cols if c in filtered_df.columns]
 
@@ -346,6 +360,8 @@ def main():
             "floor": "층",
             "buildYear": "건축년도",
             "dealType": "거래유형",
+            "cdealType": "해제여부",
+            "cdealDay": "해제사유발생일",
         }
 
         table_df = filtered_df[available_display_cols].copy()

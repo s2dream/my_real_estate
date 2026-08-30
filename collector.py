@@ -192,7 +192,19 @@ def clean_and_filter(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         return df
 
     # 1. 텍스트 및 기본 컬럼 전처리
-    str_cols = ["aptNm", "umdNm", "jibun", "dealYear", "dealMonth", "dealDay", "sggCd", "buildYear", "dealType"]
+    str_cols = [
+        "aptNm",
+        "umdNm",
+        "jibun",
+        "dealYear",
+        "dealMonth",
+        "dealDay",
+        "sggCd",
+        "buildYear",
+        "dealType",
+        "cdealType",
+        "cdealDay",
+    ]
     for col in str_cols:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
