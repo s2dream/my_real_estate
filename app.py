@@ -474,14 +474,14 @@ def main():
             else:
                 fig_trend.add_trace(trace_scatter)
 
-            # 🌟 신고가 갱신 거래 마커 (범례 겹침 방지: showlegend=False)
+            # 🌟 신고가 갱신 거래 마커 (단지 고유 색상 적용하여 구분 명확화)
             if show_ath:
                 ath_df = apt_df[apt_df["is_ath"]]
                 if not ath_df.empty:
                     hover_text_ath = [
-                        f"🌟 <b>{row['aptNm']} [신고가 갱신!]</b><br>"
+                        f"🌟 <b>{row['aptNm']} [단지 신고가 갱신!]</b><br>"
                         f"거래일: {row['dealDate'].strftime('%Y-%m-%d') if pd.notna(row['dealDate']) else ''}<br>"
-                        f"신고가 금액: <b style='color:#ef4444;'>{format_korean_currency(row['dealAmount'])}</b><br>"
+                        f"신고가 금액: <b style='color:{color};'>{format_korean_currency(row['dealAmount'])}</b><br>"
                         f"평당가: {int(round(row.get('pyeongPrice', 0))):,}만원/평<br>"
                         f"층수: {row.get('floor', '-')}층 | 전용: {row.get('excluUseAr', '-')}㎡"
                         for _, row in ath_df.iterrows()
@@ -494,10 +494,10 @@ def main():
                         legendgroup=apt,
                         showlegend=False,
                         marker=dict(
-                            symbol="star-diamond",
+                            symbol="star",
                             size=14,
-                            color="#ffd700",
-                            line=dict(width=2, color="#ef4444"),
+                            color=color,
+                            line=dict(width=2, color="#ffffff"),
                         ),
                         text=hover_text_ath,
                         hoverinfo="text",
