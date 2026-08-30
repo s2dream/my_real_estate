@@ -160,26 +160,6 @@ def main():
         )
         return
 
-    # 동적 메타데이터 계산
-    db_regions = sorted(df["regionName"].dropna().unique().tolist())
-    region_str = ", ".join(db_regions) if db_regions else "전체 지역"
-    start_ym = setting.get("collection", {}).get("start_year_month", "202601")
-    area_cfg = setting.get("collection", {}).get("area_filter", {})
-    area_str = "84타입 전용" if area_cfg.get("enabled", False) else "전체 면적"
-
-    st.markdown(
-        f"""
-        <div>
-            <span class="badge">📍 대상 지역: {region_str}</span>
-            <span class="badge">📐 면적: {area_str}</span>
-            <span class="badge">📅 기준: {start_ym[:4]}년 {start_ym[4:]}월 ~ 현재</span>
-            <span class="badge">💾 SQLite DB 연동</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.write("")
-
     # ---------------------------------------------------------
     # 사이드바 필터 (연쇄 필터링 적용)
     # ---------------------------------------------------------
@@ -240,6 +220,29 @@ def main():
 
     st.sidebar.markdown("---")
     st.sidebar.caption("💡 팁: 그래프 범례를 클릭하여 특정 단지만 보거나 숨길 수 있습니다.")
+
+    # ---------------------------------------------------------
+    # 상단 대시보드 실시간 선택 필터 뱃지
+    # ---------------------------------------------------------
+    # 실시간 선택된 지역 및 필터 텍스트
+    current_selected_region_str = ", ".join(selected_regions) if selected_regions else "지역 미선택"
+    start_ym = setting.get("collection", {}).get("start_year_month", "202601")
+    area_cfg = setting.get("collection", {}).get("area_filter", {})
+    area_str = "84타입 전용" if area_cfg.get("enabled", False) else "전체 면적"
+    selected_complex_str = f"{len(selected_complexes)}개 단지 선택" if selected_complexes else f"전체 {len(available_complexes)}개 단지"
+
+    st.markdown(
+        f"""
+        <div style="margin-bottom: 15px;">
+            <span class="badge" style="background-color: #2563eb; color: white;">📍 선택 지역: {current_selected_region_str}</span>
+            <span class="badge">🏢 단지: {selected_complex_str}</span>
+            <span class="badge">🏗️ 연식: 최근 {max_age}년 이내 ({current_year - max_age}년~)</span>
+            <span class="badge">📐 {area_str}</span>
+            <span class="badge">📅 {start_ym[:4]}년 {start_ym[4:]}월 ~ 현재</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if filtered_df.empty:
         st.info("선택된 필터 조건에 해당하는 실거래 데이터가 없습니다.")
