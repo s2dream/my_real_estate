@@ -2,7 +2,7 @@ import os
 import sys
 import unittest
 from streamlit.testing.v1 import AppTest
-from db_manager import RealEstateDB
+from src.db.db_manager import RealEstateDB
 
 class TestAppDashboard(unittest.TestCase):
     """

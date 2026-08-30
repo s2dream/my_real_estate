@@ -22,8 +22,6 @@ my_real_estate/
 │   └── test_api.py             # API 연동 및 전처리 단위 테스트
 ├── data/
 │   └── transactions.db         # SQLite 실거래가 데이터베이스 파일
-├── collector.py                # 루트 실행 엔트리포인트 (python collector.py / Actions)
-├── db_manager.py               # 루트 호환 re-export
 ├── setting.yml                 # 수집 대상 기간, 지역, 전용면적(타입), 관심단지, DB 설정 파일
 ├── requirements.txt            # Python 의존성 패키지
 └── README.md                   # 설정 및 배포 가이드
@@ -127,7 +125,7 @@ python -m unittest discover tests
 
 ### 4. 로컬 데이터 수집 및 SQLite 적재
 ```bash
-python collector.py
+python -m src.collector.collector
 ```
 
 ### 5. Streamlit 로컬 웹 대시보드 실행
