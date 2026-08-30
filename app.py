@@ -330,6 +330,23 @@ def main():
     st.write("")
 
     # ---------------------------------------------------------
+    # 단지별 전역 일관 색상 매핑 (Global Consistent Color Mapping)
+    # 필터 변경 시에도 각 단지의 고유 색상이 모든 차트에서 일관되게 유지됨
+    # ---------------------------------------------------------
+    COLOR_PALETTE = (
+        px.colors.qualitative.Plotly
+        + px.colors.qualitative.Bold
+        + px.colors.qualitative.Dark24
+        + px.colors.qualitative.Set2
+        + px.colors.qualitative.Pastel
+    )
+    all_known_apts = sorted(df["aptNm"].dropna().unique().tolist()) if "aptNm" in df.columns else []
+    complex_color_map = {
+        apt: COLOR_PALETTE[i % len(COLOR_PALETTE)]
+        for i, apt in enumerate(all_known_apts)
+    }
+
+    # ---------------------------------------------------------
     # 인터랙티브 심층 분석 탭
     # ---------------------------------------------------------
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -355,11 +372,10 @@ def main():
         fig_trend = go.Figure()
 
         unique_apts = filtered_df["aptNm"].unique()
-        color_palette = px.colors.qualitative.Plotly
 
-        for idx, apt in enumerate(unique_apts):
+        for apt in unique_apts:
             apt_df = filtered_df[filtered_df["aptNm"] == apt].sort_values("dealDate")
-            color = color_palette[idx % len(color_palette)]
+            color = complex_color_map.get(apt, "#3b82f6")
 
             # 1. 단지별 실거래 산점도
             hover_text = [
@@ -382,7 +398,7 @@ def main():
                     marker=dict(
                         size=9,
                         color=color,
-                        opacity=0.7,
+                        opacity=0.75,
                         line=dict(width=1, color="white"),
                     ),
                     text=hover_text,
@@ -419,7 +435,7 @@ def main():
             )
 
         fig_trend.update_layout(
-            title="단지별 실거래가 분포 및 단지별 이동평균 추세선",
+            title="단지별 실거래가 분포 및 단지별 이동평균 추세선 (단지 고유 색상 적용)",
             xaxis_title="계약 체결일",
             yaxis_title="거래금액 (만원)",
             yaxis=dict(tickformat=","),
@@ -448,13 +464,14 @@ def main():
                 평균건축년도=("buildYear", lambda x: pd.to_numeric(x, errors="coerce").mean()),
             )
             .reset_index()
-            .sort_values(by="평균평당가", ascending=True) # 가로 막대 상단에 높은 값 위치하도록 오름차순 정렬
+            .sort_values(by="평균평당가", ascending=True)
         )
 
-        # 가로형 막대그래프 통합 시각화
+        bar_colors = [complex_color_map.get(apt, "#3b82f6") for apt in complex_agg["aptNm"]]
+
         fig_hbar = go.Figure()
 
-        # 평당가 막대 (오른쪽으로 길어짐)
+        # 평당가 막대 (단지별 일관 고유 색상 적용)
         fig_hbar.add_trace(
             go.Bar(
                 y=complex_agg["aptNm"],
@@ -462,8 +479,7 @@ def main():
                 orientation="h",
                 name="평균 평당가 (만원/평)",
                 marker=dict(
-                    color=complex_agg["평균평당가"],
-                    colorscale="Blues",
+                    color=bar_colors,
                     line=dict(color="#1d3557", width=1),
                 ),
                 text=[
@@ -493,9 +509,9 @@ def main():
             annotation_position="top right",
         )
 
-        chart_height = max(450, len(complex_agg) * 32 + 100)
+        chart_height = max(450, len(complex_agg) * 34 + 100)
         fig_hbar.update_layout(
-            title="단지별 평당 평균 가격 랭킹 (오른쪽으로 길어지는 가로형 통합 차트)",
+            title="단지별 평당 평균 가격 랭킹 (단지별 일관 고유 색상 적용)",
             xaxis_title="3.3㎡(평)당 평균 가격 (만원/평)",
             yaxis_title="아파트 단지명",
             template="plotly_white",
@@ -514,7 +530,6 @@ def main():
         # 1. 층수 분석 섹션
         st.markdown("#### 1️⃣ 층수(Floor)와 실거래가 상관관계 및 통계 분석")
         
-        # 전체 층수 선형회귀 분석 (scipy linregress)
         valid_floor_df = filtered_df.dropna(subset=["floor", "dealAmount"]).copy()
         if len(valid_floor_df) >= 3:
             slope, intercept, r_value, p_value, std_err = stats.linregress(
@@ -522,7 +537,6 @@ def main():
             )
             r_squared = r_value ** 2
             
-            # 통계적 해석 문구
             strength = "강한 양의 상관관계" if r_value > 0.4 else "보통 수준의 상관관계" if r_value > 0.15 else "미미한 상관관계"
             st.markdown(
                 f"""<div class="insight-box">
@@ -535,17 +549,18 @@ def main():
 
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            # 전체 층수 vs 실거래가 산점도 + 회귀선
+            # 전체 층수 vs 실거래가 산점도 + 회귀선 (단지별 색상 적용)
             fig_floor_all = px.scatter(
                 valid_floor_df,
                 x="floor",
                 y="dealAmount",
-                color="regionName",
+                color="aptNm",
+                color_discrete_map=complex_color_map,
                 trendline="ols",
-                title="전체 층수 vs 실거래가 상관관계 (회귀 추세선)",
-                labels={"floor": "층수", "dealAmount": "거래금액 (만원)", "regionName": "지역"},
+                title="단지별 층수 vs 실거래가 분포 및 회귀선",
+                labels={"floor": "층수", "dealAmount": "거래금액 (만원)", "aptNm": "단지명"},
                 template="plotly_white",
-                hover_data=["aptNm", "dealDate"],
+                hover_data=["regionName", "dealDate"],
             )
             fig_floor_all.update_layout(height=420, yaxis=dict(tickformat=","))
             st.plotly_chart(fig_floor_all, use_container_width=True)
@@ -563,6 +578,7 @@ def main():
                 y="dealAmount",
                 color="floorGroup",
                 barmode="group",
+                color_discrete_sequence=["#93c5fd", "#3b82f6", "#1e3a8a"],
                 title="단지별 층수 구간(저층/중층/고층) 평균 가격 비교",
                 labels={"aptNm": "단지명", "dealAmount": "평균 거래가 (만원)", "floorGroup": "층수 구간"},
                 template="plotly_white",
@@ -602,7 +618,6 @@ def main():
             )
             build_monthly_agg["buildYear_label"] = build_monthly_agg["buildYear"].astype(str) + "년 준공"
 
-            # 가로형 그룹 막대그래프로 월별 추이 비교
             fig_build_monthly = px.bar(
                 build_monthly_agg,
                 y="buildYear_label",
@@ -627,7 +642,6 @@ def main():
     with tab4:
         st.subheader("📊 거래량 추이 및 가격대 분포 통계")
 
-        # 보기 모드 선택 (지역별 vs 아파트 단지별)
         view_mode = st.radio(
             "분석 기준 선택",
             ["🌐 지역(구)별 보기", "🏢 아파트 단지별 보기"],
@@ -637,7 +651,6 @@ def main():
         if view_mode == "🌐 지역(구)별 보기":
             col_v1, col_v2 = st.columns(2)
             with col_v1:
-                # 지역별 월별 거래량
                 vol_region = filtered_df.groupby(["dealYM", "regionName"]).size().reset_index(name="거래건수")
                 fig_v_r = px.bar(
                     vol_region,
@@ -654,7 +667,6 @@ def main():
                 st.plotly_chart(fig_v_r, use_container_width=True)
 
             with col_v2:
-                # 지역별 가격 분포 히스토그램
                 fig_h_r = px.histogram(
                     filtered_df,
                     x="dealAmount",
@@ -668,7 +680,6 @@ def main():
                 fig_h_r.update_layout(height=420, yaxis=dict(tickformat=","), xaxis=dict(tickformat=","))
                 st.plotly_chart(fig_h_r, use_container_width=True)
 
-            # 지역별 요약 통계
             st.markdown("##### 📋 지역별 가격 통계 요약표")
             reg_stat = (
                 filtered_df.groupby("regionName")["dealAmount"]
@@ -690,15 +701,16 @@ def main():
         else: # 🏢 아파트 단지별 보기
             col_v1, col_v2 = st.columns(2)
             with col_v1:
-                # 단지별 월별 거래량
+                # 단지별 월별 거래량 (단지 일관 고유 색상 매핑 적용)
                 vol_apt = filtered_df.groupby(["dealYM", "aptNm"]).size().reset_index(name="거래건수")
                 fig_v_a = px.bar(
                     vol_apt,
                     x="dealYM",
                     y="거래건수",
                     color="aptNm",
+                    color_discrete_map=complex_color_map,
                     barmode="stack",
-                    title="단지별 월별 실거래 건수 추이",
+                    title="단지별 월별 실거래 건수 추이 (단지 고유 색상 적용)",
                     labels={"dealYM": "계약년월", "거래건수": "거래건수", "aptNm": "단지명"},
                     text_auto=True,
                     template="plotly_white",
@@ -707,21 +719,21 @@ def main():
                 st.plotly_chart(fig_v_a, use_container_width=True)
 
             with col_v2:
-                # 단지별 박스플롯 가격 분포
+                # 단지별 박스플롯 (단지 일관 고유 색상 매핑 적용)
                 fig_b_a = px.box(
                     filtered_df,
                     x="aptNm",
                     y="dealAmount",
                     color="aptNm",
+                    color_discrete_map=complex_color_map,
                     points="all",
-                    title="단지별 실거래가 분포 박스플롯 (개별 거래점 표시)",
+                    title="단지별 실거래가 분포 박스플롯 (단지 고유 색상 적용)",
                     labels={"aptNm": "단지명", "dealAmount": "거래금액 (만원)"},
                     template="plotly_white",
                 )
                 fig_b_a.update_layout(height=420, showlegend=False, yaxis=dict(tickformat=","))
                 st.plotly_chart(fig_b_a, use_container_width=True)
 
-            # 아파트 단지별 세심한 세부 통계 요약표
             st.markdown("##### 📋 단지별 세부 통계 요약표 (사분위수 & 평당가 & 최근 거래일)")
             apt_detail_stats = []
             for apt, grp in filtered_df.groupby("aptNm"):
