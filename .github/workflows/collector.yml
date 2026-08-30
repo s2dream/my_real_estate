@@ -2,8 +2,8 @@ name: Real Estate Data Collector Pipeline
 
 on:
   schedule:
-    # 매시간 정각 실행 (UTC 기준 0분 = 한국시간 정각)
-    - cron: '0 * * * *'
+    # 매 15분마다 실행 (UTC 기준)
+    - cron: '*/15 * * * *'
   workflow_dispatch: # Actions 탭에서 수동으로 즉시 실행 가능
 
 permissions:

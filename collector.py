@@ -217,7 +217,18 @@ def clean_and_filter(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 df.loc[type_cond, "areaType"] = t.get("name", f"{min_ar}~{max_ar}㎡")
             df = df[condition]
 
-    # 7. 관심 단지 필터 적용 (target_complexes)
+    # 7. 준공연도(건축년도) 필터 적용 (setting.yml)
+    build_filter = config.get("collection", {}).get("build_year_filter", {})
+    if build_filter.get("enabled", False) and "buildYear" in df.columns:
+        within_years = int(build_filter.get("within_years", 10))
+        current_year = get_kst_now().year
+        min_build_year = current_year - within_years
+
+        # 숫자로 변환 후 필터링 (결측치 제외)
+        build_numeric = pd.to_numeric(df["buildYear"], errors="coerce")
+        df = df[build_numeric >= min_build_year]
+
+    # 8. 관심 단지 필터 적용 (target_complexes)
     target_complexes = config.get("collection", {}).get("target_complexes", [])
     if target_complexes and "aptNm" in df.columns:
         df = df[df["aptNm"].isin(target_complexes)]
