@@ -44,5 +44,6 @@ jobs:
             echo "변경되거나 신규 추가된 데이터가 없습니다."
           else
             git commit -m "Auto: Update real estate transactions data [skip ci]"
+            git pull --rebase
             git push
           fi

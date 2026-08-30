@@ -8,6 +8,11 @@ import pandas as pd
 from urllib.parse import unquote
 from datetime import datetime, timezone, timedelta
 
+# 프로젝트 루트 경로를 sys.path에 추가 (독립 실행 및 GitHub Actions 실행 모두 호환)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from src.db.db_manager import RealEstateDB
 
 # .env 파일이 존재하는 경우 환경변수로 자동 로드 (로컬 테스트용)
@@ -26,6 +31,12 @@ API_URL = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcApt
 
 def load_config(config_path="setting.yml"):
     """setting.yml 설정 파일을 로드합니다."""
+    # 상대 경로인 경우 프로젝트 루트 기준으로 변환
+    if not os.path.isabs(config_path):
+        resolved_path = os.path.join(PROJECT_ROOT, config_path)
+        if os.path.exists(resolved_path):
+            config_path = resolved_path
+
     if not os.path.exists(config_path):
         print(f"[경고] 설정 파일({config_path})이 없습니다. 기본 설정을 사용합니다.")
         return {
