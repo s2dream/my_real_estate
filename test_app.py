@@ -6,9 +6,7 @@ from db_manager import RealEstateDB
 
 class TestAppDashboard(unittest.TestCase):
     """
-    Streamlit 대시보드(app.py)의 무결성을 검증하는 자동화 테스트 슈트.
-    - AppTest 를 통해 app.py 실행 중 NameError, KeyError, IndexError 등의 런타임 예외가 없는지 검증
-    - 필터링, 위젯 초기화, 데이터 로드 상태 검증
+    Streamlit 대시보드(app.py)의 무결성 및 테마/필터/상세목록 검증 테스트 슈트.
     """
 
     def setUp(self):
@@ -33,9 +31,21 @@ class TestAppDashboard(unittest.TestCase):
         
         # multiselect 위젯들 정상 존재 확인 (지역, 단지명 등)
         self.assertGreater(len(at.multiselect), 0, "지역 또는 단지 멀티셀렉트 위젯이 존재해야 함")
-
-        # 런타임 에러 없음 재확인
         self.assertFalse(at.exception)
+
+    def test_dark_mode_css_and_summary_box(self):
+        """다크모드 호환 CSS 클래스 및 Tab 5 요약 박스 렌더링 무결성 검증"""
+        at = AppTest.from_file("app.py", default_timeout=15)
+        at.run()
+
+        # markdown 블록 중 다크모드 호환 클래스(.result-summary-box, .metric-card) 포함 여부 검증
+        all_markdown_text = " ".join([str(m.value) for m in at.markdown])
+        self.assertIn("result-summary-box", all_markdown_text, "Tab 5의 result-summary-box 클래스가 렌더링되어야 함")
+        self.assertIn("var(--text-color", all_markdown_text, "다크모드 호환 CSS 변수가 스타일에 정의되어야 함")
+        self.assertIn("metric-card", all_markdown_text, "metric-card 클래스가 정의되어야 함")
+
+        # 고정 흰색/검은색 충돌 인라인 스타일(background-color: #f8fafc 없는지 확인)
+        self.assertNotIn("background-color: #f8fafc", all_markdown_text, "다크모드 충돌 위험이 있는 하드코딩 인라인 배경색이 없어야 함")
 
 if __name__ == "__main__":
     unittest.main()

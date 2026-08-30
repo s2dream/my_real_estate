@@ -18,55 +18,70 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# 모던한 CSS 스타일
+# 다크모드 및 라이트모드 완벽 호환 모던 CSS 스타일
 st.markdown(
     """
     <style>
-    .main {
-        background-color: #f8f9fa;
-    }
+    /* 메트릭 카드 다크/라이트 모드 자동 적응 */
     .metric-card {
-        background-color: #ffffff;
+        background-color: var(--secondary-background-color, #ffffff);
+        color: var(--text-color, #1a1e24);
         border-radius: 12px;
         padding: 18px 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        border: 1px solid #e9ecef;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        border: 1px solid rgba(128, 128, 128, 0.2);
         margin-bottom: 15px;
     }
     .metric-title {
         font-size: 13px;
-        color: #6c757d;
+        color: var(--text-color, #6c757d);
+        opacity: 0.8;
         font-weight: 600;
         margin-bottom: 6px;
     }
     .metric-value {
         font-size: 24px;
         font-weight: 700;
-        color: #1a1e24;
+        color: var(--text-color, #1a1e24);
     }
     .metric-sub {
         font-size: 12px;
-        color: #8892b0;
+        color: var(--text-color, #8892b0);
+        opacity: 0.75;
         margin-top: 4px;
     }
     .badge {
         display: inline-block;
-        padding: 4px 8px;
+        padding: 4px 10px;
         border-radius: 6px;
         font-size: 12px;
         font-weight: 600;
-        background-color: #e3f2fd;
-        color: #1976d2;
+        background-color: rgba(59, 130, 246, 0.15);
+        color: var(--text-color, #1d4ed8);
+        border: 1px solid rgba(59, 130, 246, 0.3);
         margin-right: 6px;
+        margin-bottom: 6px;
     }
     .insight-box {
-        background-color: #f0f7ff;
+        background-color: rgba(58, 134, 255, 0.12);
         border-left: 4px solid #3a86ff;
         padding: 12px 16px;
         border-radius: 4px;
         margin-bottom: 15px;
         font-size: 14px;
-        color: #1e3a8a;
+        color: var(--text-color, #1e3a8a);
+        border-top: 1px solid rgba(58, 134, 255, 0.2);
+        border-right: 1px solid rgba(58, 134, 255, 0.2);
+        border-bottom: 1px solid rgba(58, 134, 255, 0.2);
+    }
+    .result-summary-box {
+        background-color: var(--secondary-background-color, #f8fafc);
+        color: var(--text-color, #1e293b);
+        border: 1px solid rgba(128, 128, 128, 0.25);
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 14px;
+        font-size: 14px;
     }
     </style>
     """,
@@ -782,11 +797,11 @@ def main():
 
         st.markdown(
             f"""
-            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;">
+            <div class="result-summary-box">
                 <b>📊 실시간 조회 결과:</b> 총 <b>{res_cnt:,}</b>건 | 
                 평균 거래가: <b>{format_korean_currency(res_avg)}</b> | 
-                최고가: <span style="color:#d90429;font-weight:bold;">{format_korean_currency(res_max)}</span> | 
-                최저가: <span style="color:#0077b6;font-weight:bold;">{format_korean_currency(res_min)}</span>
+                최고가: <span style="color:#ef4444;font-weight:bold;">{format_korean_currency(res_max)}</span> | 
+                최저가: <span style="color:#0ea5e9;font-weight:bold;">{format_korean_currency(res_min)}</span>
             </div>
             """,
             unsafe_allow_html=True,

@@ -121,6 +121,7 @@ def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_
         data = xmltodict.parse(res.text)
     except Exception as e:
         print(f"  [API 호출 에러] {deal_ymd} / {lawd_cd} (Page {page_no}): {e}")
+        
         return [], 0, "ERROR", str(e)
 
     # 게이트웨이 에러 체크
