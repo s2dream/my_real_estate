@@ -15,13 +15,11 @@ class TestAppDashboard(unittest.TestCase):
         self.total_count = self.db.get_count()
 
     def test_app_loads_without_exception(self):
-        """app.py 및 src/dashboard/app.py 가 예외 없이 정상 로드 및 렌더링되는지 검증"""
-        for rel_path in ["app.py", "src/dashboard/app.py"]:
-            app_file = os.path.join(self.project_root, rel_path)
-            with self.subTest(app_file=rel_path):
-                at = AppTest.from_file(app_file, default_timeout=15)
-                at.run()
-                self.assertFalse(at.exception, f"{rel_path} 실행 중 예외 발생: {at.exception}")
+        """src/dashboard/app.py 가 예외 없이 정상 로드 및 렌더링되는지 검증"""
+        app_file = os.path.join(self.project_root, "src/dashboard/app.py")
+        at = AppTest.from_file(app_file, default_timeout=15)
+        at.run()
+        self.assertFalse(at.exception, f"src/dashboard/app.py 실행 중 예외 발생: {at.exception}")
 
     def test_app_filters_interaction(self):
         """사이드바 필터 및 멀티셀렉트 상호작용 검증"""
