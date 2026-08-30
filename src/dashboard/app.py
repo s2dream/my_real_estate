@@ -19,37 +19,52 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# 다크모드 및 라이트모드 완벽 호환 모던 CSS 스타일
+# 다크모드 및 모바일/데스크탑 반응형 완벽 호환 모던 CSS 스타일
 st.markdown(
     """
     <style>
-    /* 메트릭 카드 다크/라이트 모드 자동 적응 */
+    /* 전체 레이아웃 너비 극대화 및 반응형 패딩 */
+    .main .block-container {
+        max-width: 98% !important;
+        padding-top: 1.2rem !important;
+        padding-bottom: 2.5rem !important;
+        padding-left: 1.8rem !important;
+        padding-right: 1.8rem !important;
+    }
+
+    /* 메트릭 카드 다크/라이트 모드 자동 적응 및 호버 효과 */
     .metric-card {
         background-color: var(--secondary-background-color, #ffffff);
         color: var(--text-color, #1a1e24);
         border-radius: 12px;
-        padding: 18px 20px;
+        padding: 16px 18px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.06);
         border: 1px solid rgba(128, 128, 128, 0.2);
-        margin-bottom: 15px;
+        margin-bottom: 12px;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.1);
     }
     .metric-title {
         font-size: 13px;
         color: var(--text-color, #6c757d);
-        opacity: 0.8;
+        opacity: 0.85;
         font-weight: 600;
-        margin-bottom: 6px;
+        margin-bottom: 4px;
     }
     .metric-value {
-        font-size: 24px;
+        font-size: 22px;
         font-weight: 700;
         color: var(--text-color, #1a1e24);
     }
     .metric-sub {
         font-size: 12px;
         color: var(--text-color, #8892b0);
-        opacity: 0.75;
+        opacity: 0.8;
         margin-top: 4px;
+        line-height: 1.4;
     }
     .badge {
         display: inline-block;
@@ -83,6 +98,39 @@ st.markdown(
         padding: 12px 16px;
         margin-bottom: 14px;
         font-size: 14px;
+    }
+
+    /* 📱 모바일 디바이스 전용 미디어 쿼리 (768px 이하) */
+    @media (max-width: 768px) {
+        .main .block-container {
+            max-width: 100% !important;
+            padding-left: 0.5rem !important;
+            padding-right: 0.5rem !important;
+            padding-top: 0.8rem !important;
+            padding-bottom: 1.5rem !important;
+        }
+        .metric-card {
+            padding: 12px 14px;
+            margin-bottom: 10px;
+        }
+        .metric-value {
+            font-size: 19px;
+        }
+        .metric-title {
+            font-size: 12px;
+        }
+        .metric-sub {
+            font-size: 11px;
+        }
+        /* 탭 가로 스크롤 및 폰트 최적화 */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 4px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            padding-left: 8px !important;
+            padding-right: 8px !important;
+            font-size: 13px !important;
+        }
     }
     </style>
     """,
