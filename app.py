@@ -157,15 +157,26 @@ def main():
     st.write("")
 
     # ---------------------------------------------------------
-    # 사이드바 필터
+    # 사이드바 필터 (연쇄 필터링 적용)
     # ---------------------------------------------------------
     st.sidebar.header("🔍 필터 및 분석 옵션")
 
-    # 1. 지역 필터 (DB에 존재하는 모든 지역 동적 제공)
+    # 1. 지역 필터
     selected_regions = st.sidebar.multiselect("지역 선택", options=db_regions, default=db_regions)
     filtered_df = df[df["regionName"].isin(selected_regions)]
 
-    # 2. 단지명 필터 (기본값으로 '매교역푸르지오SKVIEW', '수원센트럴아이파크자이' 지정)
+    # 2. 연식 기준 필터 (슬라이더, default 5년)
+    st.sidebar.markdown("##### 🏗️ 연식 기준 (준공연차 필터)")
+    current_year = 2026 # 한국시간 기준 현재연도
+    max_age = st.sidebar.slider("연식 기준 (최근 N년 이내 준공)", min_value=0, max_value=30, value=5, step=1)
+    st.sidebar.caption(f"ℹ️ {current_year - max_age}년 이후 준공된 아파트 ({max_age}년 이내)")
+
+    if "buildYear" in filtered_df.columns:
+        build_numeric = pd.to_numeric(filtered_df["buildYear"], errors="coerce")
+        min_allowed_build_year = current_year - max_age
+        filtered_df = filtered_df[build_numeric >= min_allowed_build_year]
+
+    # 3. 단지명 필터 (선택된 지역 + 연식 기준에 해당하는 단지만 후보로 노출)
     available_complexes = sorted(filtered_df["aptNm"].dropna().unique().tolist())
     target_defaults = ["매교역푸르지오SKVIEW", "수원센트럴아이파크자이"]
     default_selected_complexes = [apt for apt in target_defaults if apt in available_complexes]
@@ -174,42 +185,10 @@ def main():
         "아파트 단지명",
         options=available_complexes,
         default=default_selected_complexes,
-        help="선택한 단지만 선별하여 조회합니다. 모두 선택을 해제(비움)하면 전체 단지를 표시합니다.",
+        help="선택한 단지만 선별하여 조회합니다. 모두 선택을 해제(비움)하면 해당 연식의 전체 단지를 표시합니다.",
     )
     if selected_complexes:
         filtered_df = filtered_df[filtered_df["aptNm"].isin(selected_complexes)]
-
-    # 3. 준공 연차 (신축/준신축) 필터 (모바일 친화 퀵버튼 + 슬라이더)
-    st.sidebar.markdown("##### 🏗️ 준공 연차 (아파트 연식) 필터")
-    current_year = 2026 # 또는 pd.Timestamp.now().year
-    
-    # 모바일/데스크톱 모두 터치하기 편한 퀵 프리셋 라디오
-    quick_age = st.sidebar.radio(
-        "연식 퀵 프리셋",
-        ["신축 (5년 이내)", "준신축 (10년 이내)", "15년 이내", "20년 이내", "전체 연식", "직접 슬라이더 조정"],
-        index=0, # default 5년
-        horizontal=True,
-    )
-
-    if quick_age == "신축 (5년 이내)":
-        max_age = 5
-    elif quick_age == "준신축 (10년 이내)":
-        max_age = 10
-    elif quick_age == "15년 이내":
-        max_age = 15
-    elif quick_age == "20년 이내":
-        max_age = 20
-    elif quick_age == "전체 연식":
-        max_age = 30
-    else:
-        max_age = st.sidebar.slider("준공 연차 범위 (년 이내)", min_value=0, max_value=30, value=5, step=1)
-
-    st.sidebar.caption(f"ℹ️ {current_year - max_age}년 이후 준공된 아파트 조회 (최근 {max_age}년 이내)")
-
-    if "buildYear" in filtered_df.columns:
-        build_numeric = pd.to_numeric(filtered_df["buildYear"], errors="coerce")
-        min_allowed_build_year = current_year - max_age
-        filtered_df = filtered_df[build_numeric >= min_allowed_build_year]
 
     # 4. 면적 타입 필터
     if "areaType" in filtered_df.columns and filtered_df["areaType"].notna().any():
@@ -309,7 +288,7 @@ def main():
     # 인터랙티브 심층 분석 탭
     # ---------------------------------------------------------
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📈 시계열 가격 추이 & 중심축",
+        "📈 시계열 가격 추이 & 단지별 추세선",
         "🏢 단지별 랭킹 & 평당가 비교",
         "층수 & 건축년도별 분석",
         "📊 거래량 & 가격 분포 통계",
@@ -317,26 +296,27 @@ def main():
     ])
 
     # ---------------------------------------------------------
-    # TAB 1: 시계열 산점도 + 중심축 & 이동평균 추세선
+    # TAB 1: 시계열 산점도 + 단지별 이동평균 추세선 & 중심축
     # ---------------------------------------------------------
     with tab1:
-        st.subheader("계약일자별 실거래가 산점도 및 중심 추세선")
+        st.subheader("계약일자별 실거래가 및 단지별 이동평균선")
 
-        # 추세선 및 중심축 옵션
         c1, c2 = st.columns([1, 1])
         with c1:
-            show_ma = st.checkbox("이동평균 추세선 (7일 롤링 평균) 표시", value=True)
+            show_ma = st.checkbox("단지별 7일 이동평균 추세선 표시", value=True)
         with c2:
             show_mean_line = st.checkbox(f"전체 평균 가격 중심축 ({format_korean_currency(avg_price)}) 표시", value=True)
 
         fig_trend = go.Figure()
 
-        # 1. 단지별 실거래가 산점도 점
         unique_apts = filtered_df["aptNm"].unique()
-        colors = px.colors.qualitative.Plotly
+        color_palette = px.colors.qualitative.Plotly
 
         for idx, apt in enumerate(unique_apts):
             apt_df = filtered_df[filtered_df["aptNm"] == apt].sort_values("dealDate")
+            color = color_palette[idx % len(color_palette)]
+
+            # 1. 단지별 실거래 산점도
             hover_text = [
                 f"<b>{row['aptNm']}</b> ({row['regionName']})<br>"
                 f"거래일: {row['dealDate'].strftime('%Y-%m-%d') if pd.notna(row['dealDate']) else ''}<br>"
@@ -353,10 +333,11 @@ def main():
                     x=apt_df["dealDate"],
                     y=apt_df["dealAmount"],
                     mode="markers",
-                    name=apt,
+                    name=f"{apt} (실거래)",
                     marker=dict(
                         size=9,
-                        opacity=0.75,
+                        color=color,
+                        opacity=0.7,
                         line=dict(width=1, color="white"),
                     ),
                     text=hover_text,
@@ -364,26 +345,22 @@ def main():
                 )
             )
 
-        # 2. 이동평균선(7일 롤링 추세선) 오버레이
-        if show_ma and len(filtered_df) >= 3:
-            daily_avg = (
-                filtered_df.groupby("dealDate")["dealAmount"]
-                .mean()
-                .reset_index()
-                .sort_values("dealDate")
-            )
-            daily_avg["MA7"] = daily_avg["dealAmount"].rolling(window=7, min_periods=1).mean()
+            # 2. 단지별 7일 롤링 이동평균선
+            if show_ma and len(apt_df) >= 2:
+                # 일별 평균 가격 계산 후 롤링
+                apt_daily = apt_df.groupby("dealDate")["dealAmount"].mean().reset_index().sort_values("dealDate")
+                apt_daily["MA7"] = apt_daily["dealAmount"].rolling(window=7, min_periods=1).mean()
 
-            fig_trend.add_trace(
-                go.Scatter(
-                    x=daily_avg["dealDate"],
-                    y=daily_avg["MA7"],
-                    mode="lines",
-                    name="📈 일별 7일 이동평균선",
-                    line=dict(color="#e63946", width=3),
-                    hoverinfo="skip",
+                fig_trend.add_trace(
+                    go.Scatter(
+                        x=apt_daily["dealDate"],
+                        y=apt_daily["MA7"],
+                        mode="lines",
+                        name=f"{apt} (7일 이동평균)",
+                        line=dict(color=color, width=2.5),
+                        hoverinfo="skip",
+                    )
                 )
-            )
 
         # 3. 전체 평균 가격 중심축 (수평 기준선)
         if show_mean_line:
@@ -392,18 +369,18 @@ def main():
                 line_dash="dash",
                 line_color="#1d3557",
                 line_width=2,
-                annotation_text=f"전체 평균 실거래가: {format_korean_currency(avg_price)} ({avg_price:,.0f}만원)",
+                annotation_text=f"전체 평균가: {format_korean_currency(avg_price)} ({avg_price:,.0f}만원)",
                 annotation_position="top right",
                 annotation_font=dict(size=12, color="#1d3557", weight="bold"),
             )
 
         fig_trend.update_layout(
-            title="실거래가 시간대별 분포 및 중심 가격선",
+            title="단지별 실거래가 분포 및 단지별 이동평균 추세선",
             xaxis_title="계약 체결일",
             yaxis_title="거래금액 (만원)",
             yaxis=dict(tickformat=","),
             template="plotly_white",
-            height=530,
+            height=540,
             hovermode="closest",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
