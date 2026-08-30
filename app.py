@@ -160,6 +160,9 @@ def main():
         )
         return
 
+    # DB에 존재하는 지역 목록 추출
+    db_regions = sorted(df["regionName"].dropna().unique().tolist()) if "regionName" in df.columns else []
+
     # ---------------------------------------------------------
     # 사이드바 필터 (연쇄 필터링 적용)
     # ---------------------------------------------------------
