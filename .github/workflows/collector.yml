@@ -1,0 +1,48 @@
+name: Real Estate Data Collector Pipeline
+
+on:
+  schedule:
+    # 매시간 정각 실행 (UTC 기준 0분 = 한국시간 정각)
+    - cron: '0 * * * *'
+  workflow_dispatch: # Actions 탭에서 수동으로 즉시 실행 가능
+
+permissions:
+  contents: write # Parquet 데이터 파일 커밋 및 푸시 권한
+
+jobs:
+  collect-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 환경 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 의존성 라이브러리 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 실거래가 데이터 수집 실행
+        env:
+          DATA_GO_KR_API_KEY: ${{ secrets.DATA_GO_KR_API_KEY }}
+        run: |
+          python collector.py
+
+      - name: 수집된 데이터 Git 커밋 및 푸시
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Actions Collector"
+          git add data/
+          # 변경사항이 있는 경우에만 커밋 및 푸시 (skip ci로 무한루프 방지)
+          if git diff --staged --quiet; then
+            echo "변경되거나 신규 추가된 데이터가 없습니다."
+          else
+            git commit -m "Auto: Update real estate transactions data [skip ci]"
+            git push
+          fi
