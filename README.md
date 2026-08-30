@@ -10,14 +10,20 @@ GitHub Actions를 통해 공공데이터포털(국토교통부 아파트 매매 
 my_real_estate/
 ├── .github/
 │   └── workflows/
-│       └── collector.yml       # GitHub Actions 자동 수집 스케줄러 (매시간 실행)
+│       └── collector.yml       # GitHub Actions 자동 수집 스케줄러 (2시간 주기 실행)
+├── src/                        # 핵심 파이썬 소스코드 패키지
+│   ├── db/                     # DB 관리 계층 (RealEstateDB)
+│   ├── collector/              # 공공데이터포털 API 수집 및 롤링 적재 계층
+│   └── dashboard/              # Streamlit 인터랙티브 시각화 대시보드
+├── tests/                      # 자동화 테스트 슈트
+│   ├── test_app.py             # 대시보드 UI/기능 통합 테스트
+│   └── test_api.py             # API 연동 및 전처리 단위 테스트
 ├── data/
 │   └── transactions.db         # SQLite 실거래가 데이터베이스 파일
-├── db_manager.py               # DB 전담 클래스 (RealEstateDB: 스키마, 멱등 UPSERT, 조회 관리)
-├── collector.py                # 공공데이터포털 API 수집 및 SQLite 적재 스크립트
+├── app.py                      # 루트 엔트리포인트 (streamlit run app.py)
+├── collector.py                # 루트 엔트리포인트 (python collector.py / Actions)
+├── db_manager.py               # 루트 호환 re-export
 ├── setting.yml                 # 수집 대상 기간, 지역, 전용면적(타입), 관심단지, DB 설정 파일
-├── app.py                      # Streamlit + Plotly 인터랙티브 웹 대시보드
-├── test_api.py                 # 단 1회 호출로 안전하게 API 연동을 검증하는 테스트 스크립트
 ├── requirements.txt            # Python 의존성 패키지
 └── README.md                   # 설정 및 배포 가이드
 ```
