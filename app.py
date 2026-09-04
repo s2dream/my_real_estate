@@ -227,6 +227,36 @@ def get_distinct_color_map(active_complexes: list, all_complexes: list, registry
     return registry
 
 
+def compute_all_time_highs(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    단지별 (+면적타입별) 전체 층수 시계열 데이터를 기준으로 '단지 신고가 갱신(is_ath)' 여부를 사전 판별합니다.
+    - 취소/해제된 거래는 신고가 산정에서 제외
+    - 층수 필터나 날짜 필터 적용 '이전'의 전체 데이터를 기준으로 판별하여,
+      특정 층수 필터(예: 5층 미만)를 걸었을 때 저층 거래가 가짜 신고가로 오인되는 현상을 방지합니다.
+    """
+    if df.empty or "dealAmount" not in df.columns or "aptNm" not in df.columns:
+        df["is_ath"] = False
+        return df
+
+    df = df.copy()
+    df["is_ath"] = False
+
+    group_keys = ["aptNm", "areaType"] if "areaType" in df.columns else ["aptNm"]
+    sort_cols = ["dealDate", "dealAmount"] if "dealDate" in df.columns else ["dealAmount"]
+
+    for _, group_idx in df.groupby(group_keys).groups.items():
+        sub = df.loc[group_idx].sort_values(sort_cols)
+        valid_mask = ~sub["isCanceled"] if "isCanceled" in sub.columns else pd.Series(True, index=sub.index)
+        valid_sub = sub[valid_mask]
+        if not valid_sub.empty:
+            cummax = valid_sub["dealAmount"].cummax()
+            prev_cummax = cummax.shift(1).fillna(0)
+            is_ath_series = (valid_sub["dealAmount"] == cummax) & (valid_sub["dealAmount"] > prev_cummax)
+            df.loc[valid_sub.index, "is_ath"] = is_ath_series
+
+    return df
+
+
 @st.cache_data
 def load_setting():
     """setting.yml 로드"""
@@ -277,6 +307,9 @@ def load_data():
                 else:
                     return "3) 고층/로열 (16층+)"
             df["floorGroup"] = df["floor"].apply(categorize_floor)
+
+        # 파생변수: 층수 필터와 무관한 단지 전체 기준 절대 신고가(is_ath) 계산
+        df = compute_all_time_highs(df)
 
         return df
     except Exception as e:
@@ -342,7 +375,39 @@ def main():
         if selected_types:
             filtered_df = filtered_df[filtered_df["areaType"].isin(selected_types)]
 
-    # 5. 기간 필터
+    # 5. 층수 필터 (기본 5층 이상)
+    st.sidebar.markdown("##### 🪜 층수 기준 (Floor 필터)")
+    floor_str = "전체 층수"
+    if "floor" in filtered_df.columns and filtered_df["floor"].notna().any():
+        floor_numeric_all = pd.to_numeric(df["floor"], errors="coerce").dropna()
+        db_min_floor = int(max(1, floor_numeric_all.min())) if not floor_numeric_all.empty else 1
+        db_max_floor = int(max(10, floor_numeric_all.max())) if not floor_numeric_all.empty else 30
+        default_min_floor = min(5, db_max_floor)
+
+        floor_range = st.sidebar.slider(
+            "층수 범위 (층)",
+            min_value=db_min_floor,
+            max_value=db_max_floor,
+            value=(default_min_floor, db_max_floor),
+            step=1,
+            help="기본값은 5층 이상입니다. 슬라이더를 조절하여 원하는 층수 구간(저층 제외 등)을 조회할 수 있습니다.",
+        )
+        if floor_range[0] == db_min_floor and floor_range[1] == db_max_floor:
+            floor_str = "전체 층수"
+            st.sidebar.caption("ℹ️ 전체 층수 거래 조회 중")
+        elif floor_range[1] == db_max_floor:
+            floor_str = f"{floor_range[0]}층 이상"
+            st.sidebar.caption(f"ℹ️ {floor_range[0]}층 이상 거래만 조회 중 (1~{floor_range[0]-1}층 저층 제외)")
+        else:
+            floor_str = f"{floor_range[0]}~{floor_range[1]}층"
+            st.sidebar.caption(f"ℹ️ {floor_range[0]}층 ~ {floor_range[1]}층 구간 거래 조회 중")
+
+        floor_numeric = pd.to_numeric(filtered_df["floor"], errors="coerce")
+        filtered_df = filtered_df[
+            (floor_numeric >= floor_range[0]) & (floor_numeric <= floor_range[1])
+        ]
+
+    # 6. 기간 필터
     if "dealDate" in filtered_df.columns and not filtered_df["dealDate"].dropna().empty:
         min_date = filtered_df["dealDate"].min().date()
         max_date = filtered_df["dealDate"].max().date()
@@ -354,7 +419,7 @@ def main():
                     (filtered_df["dealDate"].dt.date >= start_d) & (filtered_df["dealDate"].dt.date <= end_d)
                 ]
 
-    # 6. 거래 취소/해제 건 필터
+    # 7. 거래 취소/해제 건 필터
     include_canceled = st.sidebar.checkbox("거래 취소/해제 건 포함", value=False, help="계약 후 해제/취소된 거래를 포함하여 조회합니다.")
     if not include_canceled:
         filtered_df = filtered_df[~filtered_df["isCanceled"]]
@@ -385,6 +450,7 @@ def main():
             <span class="badge">🏢 단지: {selected_complex_str}</span>
             <span class="badge">🏗️ 연식: 최근 {max_age}년 이내 ({current_year - max_age}년~)</span>
             <span class="badge">📐 {area_str}</span>
+            <span class="badge">🪜 층수: {floor_str}</span>
             <span class="badge">📅 {start_ym[:4]}년 {start_ym[4:]}월 ~ 현재</span>
         </div>
         """,
@@ -500,9 +566,8 @@ def main():
                 min_d = apt_data["dealAmount"].min()
                 total_cnt = len(apt_data)
                 
-                # 신고가 건수
-                cum_max = apt_data["dealAmount"].cummax()
-                ath_cnt = (apt_data["dealAmount"] == cum_max).sum()
+                # 신고가 건수 (전체 층수 기준 절대 신고가 거래 중 현재 필터에 포함된 건수)
+                ath_cnt = int(apt_data["is_ath"].sum()) if "is_ath" in apt_data.columns else 0
                 
                 color_badge = "#ef4444" if change_rate > 0 else "#0ea5e9" if change_rate < 0 else "#64748b"
                 sign_str = "+" if change_rate > 0 else ""
@@ -555,9 +620,9 @@ def main():
             apt_df = filtered_df[filtered_df["aptNm"] == apt].sort_values("dealDate").copy()
             color = complex_color_map.get(apt, "#3b82f6")
 
-            # 신고가(누적 최고가) 판별
-            apt_df["cummax"] = apt_df["dealAmount"].cummax()
-            apt_df["is_ath"] = (apt_df["dealAmount"] == apt_df["cummax"]) & (apt_df["dealAmount"] > apt_df["dealAmount"].shift(1).fillna(0))
+            # 신고가(누적 최고가) 판별: 전체 층수 기준으로 사전 계산된 is_ath 사용
+            if "is_ath" not in apt_df.columns:
+                apt_df["is_ath"] = False
 
             # 일반 실거래 점
             normal_df = apt_df[~apt_df["is_ath"]] if show_ath else apt_df

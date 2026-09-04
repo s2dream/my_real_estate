@@ -10,6 +10,7 @@ from app import (
     DISTINCT_HIGH_CONTRAST_PALETTE,
     generate_golden_ratio_color,
     get_distinct_color_map,
+    compute_all_time_highs,
 )
 
 
@@ -41,6 +42,11 @@ class TestAppDashboard(unittest.TestCase):
         
         # multiselect 위젯들 정상 존재 확인 (지역, 단지명 등)
         self.assertGreater(len(at.multiselect), 0, "지역 또는 단지 멀티셀렉트 위젯이 존재해야 함")
+
+        # 층수 슬라이더 존재 및 기본값(5층 이상) 검증
+        floor_sliders = [s for s in at.slider if "층수" in s.label]
+        self.assertTrue(len(floor_sliders) > 0, "층수 슬라이더가 사이드바에 존재해야 함")
+        self.assertEqual(floor_sliders[0].value[0], 5, "층수 슬라이더의 기본 시작값은 5층이어야 함")
         self.assertFalse(at.exception)
 
     def test_dark_mode_css_and_summary_box(self):
@@ -125,6 +131,62 @@ class TestAppHelperFunctions(unittest.TestCase):
         self.assertTrue(df.iloc[0]["isCanceled"])
         self.assertFalse(df.iloc[1]["isCanceled"])
         self.assertTrue(df.iloc[2]["isCanceled"])
+
+    def test_floor_filtering_default_five_or_more(self):
+        """층수 필터 기본값(5층 이상) 적용 시 1~4층 저층이 정확히 제외되는지 검증"""
+        sample_df = pd.DataFrame([
+            {"aptNm": "단지A", "floor": 1, "dealAmount": 80000},
+            {"aptNm": "단지A", "floor": 4, "dealAmount": 85000},
+            {"aptNm": "단지A", "floor": 5, "dealAmount": 90000},
+            {"aptNm": "단지A", "floor": 12, "dealAmount": 95000},
+            {"aptNm": "단지A", "floor": 25, "dealAmount": 100000},
+        ])
+        min_f, max_f = 5, 49
+        floor_num = pd.to_numeric(sample_df["floor"], errors="coerce")
+        filtered = sample_df[(floor_num >= min_f) & (floor_num <= max_f)]
+
+        self.assertEqual(len(filtered), 3)
+        self.assertListEqual(filtered["floor"].tolist(), [5, 12, 25])
+        self.assertNotIn(1, filtered["floor"].tolist())
+        self.assertNotIn(4, filtered["floor"].tolist())
+
+    def test_compute_all_time_highs_floor_independence(self):
+        """신고가(is_ath)는 층수 필터와 무관하게 단지 전체 기준으로 산정됨을 검증"""
+        df = pd.DataFrame([
+            {"aptNm": "단지A", "dealDate": "2026-01-10", "floor": 10, "dealAmount": 90000, "isCanceled": False},
+            {"aptNm": "단지A", "dealDate": "2026-01-15", "floor": 2, "dealAmount": 85000, "isCanceled": False},
+            {"aptNm": "단지A", "dealDate": "2026-02-01", "floor": 15, "dealAmount": 95000, "isCanceled": False},
+            {"aptNm": "단지A", "dealDate": "2026-02-10", "floor": 3, "dealAmount": 88000, "isCanceled": False},
+            {"aptNm": "단지A", "dealDate": "2026-02-20", "floor": 20, "dealAmount": 100000, "isCanceled": False},
+            {"aptNm": "단지A", "dealDate": "2026-03-01", "floor": 4, "dealAmount": 92000, "isCanceled": False},
+        ])
+        res = compute_all_time_highs(df)
+
+        # 1) 전체 시계열 상에서 신고가는 90000(10층), 95000(15층), 100000(20층) 총 3건이어야 함
+        ath_deals = res[res["is_ath"]]
+        self.assertEqual(len(ath_deals), 3)
+        self.assertListEqual(ath_deals["dealAmount"].tolist(), [90000, 95000, 100000])
+
+        # 2) 5층 이하(1~4층) 거래 중에는 실제 신고가가 단 1건도 없어야 함
+        low_floor_ath = res[(res["floor"] < 5) & (res["is_ath"])]
+        self.assertEqual(len(low_floor_ath), 0, "5층 이하 매물 중에는 신고가가 없어야 함")
+
+    def test_compute_all_time_highs_canceled_deals(self):
+        """취소/해제 거래(isCanceled=True)는 신고가에 반영되지 않고 후속 정상 거래를 방해하지 않음 검증"""
+        df = pd.DataFrame([
+            {"aptNm": "단지B", "dealDate": "2026-01-10", "floor": 10, "dealAmount": 80000, "isCanceled": False},
+            {"aptNm": "단지B", "dealDate": "2026-01-20", "floor": 15, "dealAmount": 150000, "isCanceled": True},  # 허위/취소 거래
+            {"aptNm": "단지B", "dealDate": "2026-02-01", "floor": 12, "dealAmount": 85000, "isCanceled": False},
+        ])
+        res = compute_all_time_highs(df)
+
+        # 취소건은 is_ath가 False여야 함
+        canceled_row = res[res["dealAmount"] == 150000].iloc[0]
+        self.assertFalse(canceled_row["is_ath"])
+
+        # 취소건(150000) 때문에 85000 거래의 신고가 인정이 방해받아서는 안 됨 (85000 > 80000 이므로 신고가)
+        deal_85 = res[res["dealAmount"] == 85000].iloc[0]
+        self.assertTrue(deal_85["is_ath"])
 
 
 class TestAppColorSystem(unittest.TestCase):
