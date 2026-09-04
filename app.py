@@ -153,6 +153,80 @@ def format_korean_currency(amount_manwon: float) -> str:
         return f"{man:,}만원"
 
 
+# -------------------------------------------------------------
+# 최고 대비 색상 시스템 & 단지별 색상 레지스트리
+# -------------------------------------------------------------
+# 색채학(Kelly/Boynton) 기반 인간의 시각적 식별력이 극대화된 24색 고대비 시퀀스
+DISTINCT_HIGH_CONTRAST_PALETTE = [
+    "#2563EB",  # 1. 선명한 로열 블루 (Vivid Blue)
+    "#EA580C",  # 2. 강렬한 오렌지 (Vivid Orange) - 1번과 강력한 보색 대비
+    "#16A34A",  # 3. 선명한 에메랄드 그린 (Emerald Green) - 1,2번과 삼원색 대비
+    "#DC2626",  # 4. 강렬한 레드 (Vivid Red)
+    "#9333EA",  # 5. 비비드 퍼플 (Vivid Purple)
+    "#0891B2",  # 6. 딥 시안/청록 (Deep Cyan)
+    "#D97706",  # 7. 앰버 골드 (Amber Gold)
+    "#DB2777",  # 8. 비비드 핫핑크 (Hot Pink)
+    "#4F46E5",  # 9. 인디고 (Indigo)
+    "#059669",  # 10. 딥 틸/민트 (Deep Mint)
+    "#CA8A04",  # 11. 옐로우 브라운 (Yellow Brown)
+    "#E11D48",  # 12. 로즈 레드 (Rose Red)
+    "#7C3AED",  # 13. 바이올렛 (Violet)
+    "#0284C7",  # 14. 스카이 블루 (Sky Blue)
+    "#65A30D",  # 15. 라임 그린 (Lime Green)
+    "#C2410C",  # 16. 테라코타 (Terracotta)
+    "#6D28D9",  # 17. 딥 바이올렛 (Deep Violet)
+    "#0F766E",  # 18. 다크 틸 (Dark Teal)
+    "#B91C1C",  # 19. 다크 레드 (Dark Red)
+    "#4338CA",  # 20. 다크 인디고 (Dark Indigo)
+    "#15803D",  # 21. 포레스트 그린 (Forest Green)
+    "#A16207",  # 22. 다크 골드 (Dark Gold)
+    "#BE185D",  # 23. 다크 마젠타 (Dark Magenta)
+    "#334155",  # 24. 슬레이트 그레이 (Slate Grey)
+]
+
+
+def generate_golden_ratio_color(index: int) -> str:
+    """24개 초과 시 황금각(Golden Angle 137.508도)을 활용해 인접 단지와 절대 겹치지 않는 고유 HSL 색상 생성"""
+    hue = (index * 137.508) % 360
+    return f"hsl({hue:.1f}, 75%, 45%)"
+
+
+def get_distinct_color_map(active_complexes: list, all_complexes: list, registry: dict = None) -> dict:
+    """
+    선택된 단지(active_complexes)에 우선적으로 최고 대비 색상을 배정하고,
+    세션 상태(session_state)를 통해 기존 단지의 색상을 영구 유지하는 동적 컬러 매퍼.
+    """
+    if registry is None:
+        try:
+            if "complex_color_registry" not in st.session_state:
+                st.session_state.complex_color_registry = {}
+            registry = st.session_state.complex_color_registry
+        except Exception:
+            if not hasattr(get_distinct_color_map, "_fallback_registry"):
+                get_distinct_color_map._fallback_registry = {}
+            registry = get_distinct_color_map._fallback_registry
+
+    # 1. 화면에 실제로 활성화/선택된 단지들을 먼저 등록 (신규 단지는 다음 순위 최고 대비 색상 배정)
+    for apt in active_complexes:
+        if apt not in registry:
+            idx = len(registry)
+            if idx < len(DISTINCT_HIGH_CONTRAST_PALETTE):
+                registry[apt] = DISTINCT_HIGH_CONTRAST_PALETTE[idx]
+            else:
+                registry[apt] = generate_golden_ratio_color(idx)
+
+    # 2. 비선택 단지들도 fallback으로 안전하게 등록
+    for apt in all_complexes:
+        if apt not in registry:
+            idx = len(registry)
+            if idx < len(DISTINCT_HIGH_CONTRAST_PALETTE):
+                registry[apt] = DISTINCT_HIGH_CONTRAST_PALETTE[idx]
+            else:
+                registry[apt] = generate_golden_ratio_color(idx)
+
+    return registry
+
+
 @st.cache_data
 def load_setting():
     """setting.yml 로드"""
@@ -286,7 +360,13 @@ def main():
         filtered_df = filtered_df[~filtered_df["isCanceled"]]
 
     st.sidebar.markdown("---")
-    st.sidebar.caption("💡 팁: 그래프 범례를 클릭하여 특정 단지만 보거나 숨길 수 있습니다.")
+    col_sb1, col_sb2 = st.sidebar.columns([3, 2])
+    with col_sb1:
+        st.caption("💡 팁: 범례 클릭 시 특정 단지만 보거나 숨길 수 있습니다.")
+    with col_sb2:
+        if st.button("🎨 색상 초기화", help="단지별 배정된 색상을 초기 고대비 순서로 리셋합니다.", width="stretch"):
+            st.session_state.complex_color_registry = {}
+            st.rerun()
 
     # ---------------------------------------------------------
     # 상단 대시보드 실시간 선택 필터 뱃지
@@ -379,21 +459,13 @@ def main():
     st.write("")
 
     # ---------------------------------------------------------
-    # 단지별 전역 일관 색상 매핑 (Global Consistent Color Mapping)
-    # 필터 변경 시에도 각 단지의 고유 색상이 모든 차트에서 일관되게 유지됨
+    # 단지별 최고 대비 동적 색상 매핑 (High-Contrast Color Mapping)
+    # 선택된 단지 우선 최고 대비 배정 및 세션 간 색상 불변 유지
     # ---------------------------------------------------------
-    COLOR_PALETTE = (
-        px.colors.qualitative.Plotly
-        + px.colors.qualitative.Bold
-        + px.colors.qualitative.Dark24
-        + px.colors.qualitative.Set2
-        + px.colors.qualitative.Pastel
-    )
     all_known_apts = sorted(df["aptNm"].dropna().unique().tolist()) if "aptNm" in df.columns else []
-    complex_color_map = {
-        apt: COLOR_PALETTE[i % len(COLOR_PALETTE)]
-        for i, apt in enumerate(all_known_apts)
-    }
+    # 현재 화면에 노출되는 활성 단지 추출 (사용자 선택 단지 또는 필터링된 단지)
+    active_apts = [apt for apt in selected_complexes if apt in available_complexes] if selected_complexes else sorted(filtered_df["aptNm"].dropna().unique().tolist()) if "aptNm" in filtered_df.columns else []
+    complex_color_map = get_distinct_color_map(active_apts, all_known_apts)
 
     # ---------------------------------------------------------
     # 인터랙티브 심층 분석 탭

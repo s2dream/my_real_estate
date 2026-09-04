@@ -5,7 +5,12 @@ import numpy as np
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 from src.db.db_manager import RealEstateDB
-from app import format_korean_currency
+from app import (
+    format_korean_currency,
+    DISTINCT_HIGH_CONTRAST_PALETTE,
+    generate_golden_ratio_color,
+    get_distinct_color_map,
+)
 
 
 class TestAppDashboard(unittest.TestCase):
@@ -120,6 +125,60 @@ class TestAppHelperFunctions(unittest.TestCase):
         self.assertTrue(df.iloc[0]["isCanceled"])
         self.assertFalse(df.iloc[1]["isCanceled"])
         self.assertTrue(df.iloc[2]["isCanceled"])
+
+
+class TestAppColorSystem(unittest.TestCase):
+    """
+    단지별 고대비 색상 매핑 및 세션 레지스트리 무결성 검증:
+    - 2개 단지 선택 시 최고 대비(보색) 색상 부여
+    - 단지 추가 시 기존 단지 색상 불변(안정성)
+    - 24개 초과 시 황금각 HSL 생성기 정상 동작
+    - 24개 팔레트 내 모든 색상 고유성(중복 없음)
+    """
+
+    def setUp(self):
+        import streamlit as st
+        st.session_state.clear()
+
+    def test_palette_uniqueness(self):
+        """24개 최고 대비 팔레트에 중복 색상이 없는지 검증"""
+        self.assertEqual(len(DISTINCT_HIGH_CONTRAST_PALETTE), 24)
+        self.assertEqual(len(set(DISTINCT_HIGH_CONTRAST_PALETTE)), 24)
+
+    def test_initial_two_complexes_distinct_colors(self):
+        """최초 2개 단지 선택 시 1번(블루)과 2번(오렌지) 최고 대비 색상이 배정되는지 검증"""
+        reg = {}
+        color_map = get_distinct_color_map(["단지A", "단지B"], ["단지A", "단지B", "단지C"], registry=reg)
+        self.assertEqual(color_map["단지A"], DISTINCT_HIGH_CONTRAST_PALETTE[0])
+        self.assertEqual(color_map["단지B"], DISTINCT_HIGH_CONTRAST_PALETTE[1])
+        self.assertNotEqual(color_map["단지A"], color_map["단지B"])
+
+    def test_color_stability_on_adding_new_complex(self):
+        """신규 단지 추가 시 기존 단지 색상이 유지되고 새 단지에 다음 고대비 색상이 부여되는지 검증"""
+        reg = {}
+        # 1차: A, B 선택
+        map1 = get_distinct_color_map(["단지A", "단지B"], ["단지A", "단지B", "단지C"], registry=reg)
+        color_a = map1["단지A"]
+        color_b = map1["단지B"]
+
+        # 2차: C 추가 (A, B, C 선택)
+        map2 = get_distinct_color_map(["단지A", "단지B", "단지C"], ["단지A", "단지B", "단지C"], registry=reg)
+        self.assertEqual(map2["단지A"], color_a, "기존 단지A 색상은 불변이어야 함")
+        self.assertEqual(map2["단지B"], color_b, "기존 단지B 색상은 불변이어야 함")
+        self.assertEqual(map2["단지C"], DISTINCT_HIGH_CONTRAST_PALETTE[2], "단지C는 3번째 고대비 색상(그린)을 받아야 함")
+
+    def test_golden_angle_generation_over_24(self):
+        """24개 초과 단지 등록 시 황금각 HSL 색상이 정상 생성되는지 검증"""
+        color_25 = generate_golden_ratio_color(25)
+        self.assertTrue(color_25.startswith("hsl("))
+        self.assertTrue(color_25.endswith(")"))
+
+        # 30개 단지 등록 시 모든 단지 색상이 고유함을 확인
+        reg = {}
+        many_apts = [f"아파트_{i}" for i in range(30)]
+        many_map = get_distinct_color_map(many_apts, many_apts, registry=reg)
+        self.assertEqual(len(many_map), 30)
+        self.assertEqual(len(set(many_map.values())), 30, "30개 단지의 배정 색상은 모두 고유해야 함")
 
 
 if __name__ == "__main__":
