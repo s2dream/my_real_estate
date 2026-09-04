@@ -10,7 +10,7 @@ GitHub Actions를 통해 공공데이터포털(국토교통부 아파트 매매 
 my_real_estate/
 ├── .github/
 │   └── workflows/
-│       └── collector.yml       # GitHub Actions 자동 수집 스케줄러 (2시간 주기 실행)
+│       └── collector.yml       # GitHub Actions 자동 수집 스케줄러 (4시간 주기 실행)
 ├── src/                        # 핵심 파이썬 소스코드 패키지
 │   ├── db/                     # DB 관리 계층 (RealEstateDB)
 │   │   └── db_manager.py

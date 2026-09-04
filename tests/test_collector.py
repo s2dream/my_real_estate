@@ -1,10 +1,14 @@
 import unittest
 import pandas as pd
+import requests
 from datetime import datetime, timezone, timedelta
 from src.collector.collector import (
     generate_year_month_list,
     get_rolling_year_month_list,
     clean_and_filter,
+    load_config,
+    get_kst_now,
+    get_retry_session,
 )
 
 
@@ -14,6 +18,11 @@ class TestCollectorLogic(unittest.TestCase):
     - 시작/종료 년월 리스트 생성
     - 롤링 버퍼 년월 리스트 엣지 케이스
     - 전용면적, 준공연도, 관심단지 복합 필터링
+    - 모든 필터 비활성화 시 전건 보존
+    - 빈 데이터프레임 처리
+    - 설정 파일 부재 시 기본값 폴백 (load_config)
+    - KST 타임존 오프셋 (+09:00)
+    - 재시도 세션 (get_retry_session)
     """
 
     def test_generate_year_month_list(self):
@@ -58,7 +67,6 @@ class TestCollectorLogic(unittest.TestCase):
             }
         }
 
-        # 테스트 케이스 데이터
         raw_data = pd.DataFrame([
             # 통과 대상 1: 84타입, 2022년 준공, 푸르지오
             {
@@ -124,6 +132,51 @@ class TestCollectorLogic(unittest.TestCase):
         self.assertEqual(cleaned[cleaned["aptNm"] == "푸르지오"]["areaType"].iloc[0], "84타입")
         self.assertEqual(cleaned[cleaned["aptNm"] == "자이"]["areaType"].iloc[0], "59타입")
         self.assertEqual(cleaned[cleaned["aptNm"] == "푸르지오"]["dealAmount"].iloc[0], 95000)
+
+    def test_clean_and_filter_disabled_filters(self):
+        """필터가 모두 비활성화(enabled=False)된 경우 모든 데이터가 보존되는지 검증"""
+        config = {
+            "collection": {
+                "area_filter": {"enabled": False},
+                "build_year_filter": {"enabled": False},
+                "target_complexes": [],
+            }
+        }
+        raw_data = pd.DataFrame([
+            {"aptNm": "단지A", "dealAmount": "50,000", "excluUseAr": "39.5", "buildYear": "1995", "dealYear": "2026", "dealMonth": "1", "dealDay": "1"},
+            {"aptNm": "단지B", "dealAmount": "150,000", "excluUseAr": "114.2", "buildYear": "2000", "dealYear": "2026", "dealMonth": "1", "dealDay": "2"},
+        ])
+        cleaned = clean_and_filter(raw_data, config)
+        self.assertEqual(len(cleaned), 2)
+        self.assertEqual(cleaned.iloc[0]["dealAmount"], 50000)
+        self.assertEqual(cleaned.iloc[1]["dealAmount"], 150000)
+
+    def test_clean_and_filter_empty_dataframe(self):
+        """빈 DataFrame 입력 시 에러 없이 빈 DataFrame 반환 검증"""
+        cleaned = clean_and_filter(pd.DataFrame(), {})
+        self.assertTrue(cleaned.empty)
+
+    def test_load_config_fallback(self):
+        """존재하지 않는 설정 파일 로드 시 기본 설정 반환 검증"""
+        cfg = load_config("non_existent_config_path_xyz123.yml")
+        self.assertIn("collection", cfg)
+        self.assertIn("storage", cfg)
+        self.assertEqual(cfg["collection"]["start_year_month"], "202601")
+        self.assertEqual(cfg["storage"]["db_path"], "data/transactions.db")
+
+    def test_get_kst_now_timezone(self):
+        """한국 표준시(KST) 타임존 오프셋(+09:00) 검증"""
+        kst = get_kst_now()
+        self.assertIsNotNone(kst.tzinfo)
+        utc_offset = kst.utcoffset()
+        self.assertEqual(utc_offset, timedelta(hours=9))
+
+    def test_get_retry_session(self):
+        """재시도 세션 객체 생성 및 HTTPS 마운트 확인"""
+        session = get_retry_session(retries=2, backoff_factor=0.1)
+        self.assertIsInstance(session, requests.Session)
+        self.assertIn("https://", session.adapters)
+        self.assertIn("http://", session.adapters)
 
 
 if __name__ == "__main__":
