@@ -16,6 +16,14 @@ START = pd.Timestamp("2025-01-01")
 AS_OF = pd.Timestamp("2025-12-31")
 
 
+def report_metadata(as_of=AS_OF, lag_days=0):
+    return {
+        "start_date": str(START.date()), "as_of": str(as_of.date()),
+        "lag_days": lag_days, "database_sha256": "synthetic",
+        "query_rows_sha256": "synthetic", "python": "test",
+    }
+
+
 def transaction(row_id, name=reassessment.SK, date="2025-02-10", **changes):
     row = {
         "id": row_id, "aptNm": name, "dealDate": date,
@@ -152,18 +160,63 @@ class TestComparableObservations(unittest.TestCase):
         ])
         self.assertTrue(reassessment.comparable_sample(clean, AS_OF).empty)
 
+    def test_descriptive_tables_share_supported_months_floors_and_cutoff(self):
+        _, clean, _, _ = prepare([
+            transaction(1, date="2025-01-01", floor=1, dealAmount=70000),
+            transaction(2, date="2025-02-01", floor=3, dealAmount=80000),
+            transaction(3, date="2025-02-02", floor=8, dealAmount=90000),
+            transaction(4, reassessment.IP, date="2025-02-03", floor=9, dealAmount=80000),
+            transaction(5, reassessment.IP, date="2025-02-04", floor=18, dealAmount=87000),
+            transaction(6, date="2025-03-01", floor=18, dealAmount=100000),
+            transaction(7, reassessment.IP, date="2025-03-02", floor=3, dealAmount=85000),
+            transaction(8, date="2025-02-05", floor=20, dealAmount=200000),
+            transaction(9, date="2025-07-01", floor=8, dealAmount=110000),
+            transaction(10, reassessment.IP, date="2025-07-02", floor=9, dealAmount=90000),
+            transaction(11, date="2025-12-01", floor=8, dealAmount=300000),
+            transaction(12, reassessment.IP, date="2025-12-02", floor=9, dealAmount=250000),
+        ])
+        result = reassessment.analyze(clean, START, AS_OF, lag_days=153)
+        self.assertEqual(result["cutoff"], pd.Timestamp("2025-07-31"))
+        self.assertEqual(set(result["common"].id), {2, 3, 4, 5, 6, 7, 9, 10})
+        distributions = result["distributions"]
+        all_rows = distributions[distributions.scope == "전체 유효 거래"].set_index("aptNm")
+        common_rows = distributions[distributions.scope == "공통월·공통 층 범위"].set_index("aptNm")
+        self.assertEqual(all_rows.loc[reassessment.SK, "n"], 7)
+        self.assertEqual(common_rows.loc[reassessment.SK, "n"], 4)
+        self.assertEqual(common_rows.loc[reassessment.IP, "n"], 4)
+        self.assertAlmostEqual(common_rows.loc[reassessment.SK, "mean"], 9.5)
+        self.assertAlmostEqual(common_rows.loc[reassessment.SK, "q25"], 8.75)
+        self.assertAlmostEqual(common_rows.loc[reassessment.IP, "median"], 8.6)
+
+        quarters = result["quarters"].set_index("quarter")
+        self.assertEqual(quarters.index.tolist(), ["2025Q1", "2025Q3"])
+        self.assertEqual(quarters.loc["2025Q1", "months"], "2025-02, 2025-03")
+        self.assertEqual(quarters.loc["2025Q3", "months"], "2025-07")
+        self.assertEqual(quarters.loc["2025Q1", ["sk_n", "ip_n"]].tolist(), [3, 3])
+        self.assertAlmostEqual(quarters.loc["2025Q1", "sk_median"], 9.0)
+        floors = result["floors"].set_index("floor_tier")
+        self.assertEqual(int(floors.sk_n.sum()), 4)
+        self.assertEqual(int(floors.ip_n.sum()), 4)
+        self.assertEqual(floors.loc["16층 이상", "sk_n"], 1)
+        self.assertAlmostEqual(floors.loc["16층 이상", "sk_share_pct"], 25.0)
+        self.assertEqual(result["matched_months"].month.tolist(), ["2025-02", "2025-07"])
+
 
 class TestStatisticalInterpretation(unittest.TestCase):
-    def test_invalid_legacy_observation_does_not_abort_clean_analysis(self):
+    def test_invalid_raw_observation_is_removed_before_exportable_analysis(self):
         for bad_value in ("bad", np.inf):
             with self.subTest(dealAmount=bad_value):
                 raw, _, _, _ = market_fixture()
                 raw["dealAmount"] = raw["dealAmount"].astype(object)
                 raw.loc[raw.index[0], "dealAmount"] = bad_value
-                legacy, clean, _, audit = reassessment.prepare_data(raw, START, AS_OF)
+                _, clean, _, audit = reassessment.prepare_data(raw, START, AS_OF)
                 self.assertEqual(audit["invalid_price_rows"], 1)
-                result = reassessment.analyze(legacy, clean, START, AS_OF)
-                self.assertGreater(result["models"][3]["estimate"], 0)
+                self.assertEqual(len(clean), len(raw) - 1)
+                self.assertTrue(np.isfinite(clean.price).all())
+                result = reassessment.analyze(clean, START, AS_OF)
+                self.assertGreater(result["primary"]["estimate"], 0)
+                self.assertTrue(all(np.isfinite(model["estimate"])
+                                    for model in result["models"] if "estimate" in model))
                 # Results must remain exportable as standards-compliant JSON.
                 json.dumps(result["models"], allow_nan=False)
 
@@ -179,19 +232,52 @@ class TestStatisticalInterpretation(unittest.TestCase):
         self.assertGreater(estimate["ci_high"], expected)
 
     def test_reversed_prices_reverse_report_interpretation(self):
-        legacy, clean, duplicates, audit = market_fixture(sk_effect=-0.8)
-        result = reassessment.analyze(legacy, clean, START, AS_OF, lag_days=0)
-        primary = result["models"][3]
+        _, clean, _, audit = market_fixture(sk_effect=-0.8)
+        result = reassessment.analyze(clean, START, AS_OF, lag_days=0)
+        primary = result["primary"]
         self.assertLess(primary["ci_high"], 0)
-        metadata = {
-            "start_date": "2025-01-01", "as_of": "2025-12-31", "lag_days": 0,
-            "database_sha256": "synthetic", "query_rows_sha256": "synthetic", "python": "test",
-        }
-        report = reassessment.render_report(legacy, clean, duplicates, audit, result, metadata, [])
+        report = reassessment.render_report(clean, audit, result, report_metadata(), [])
         conclusion = report.split("## 1.")[0]
         self.assertIn("센트럴아이파크자이가 더 높은 가격", conclusion)
         self.assertNotIn("SKVIEW가 더 높은 가격", conclusion)
         self.assertIn(f"{primary['estimate']:+.3f}억원", conclusion)
+
+    def test_report_and_model_labels_describe_data_without_historical_comparison(self):
+        _, clean, _, audit = market_fixture()
+        result = reassessment.analyze(clean, START, AS_OF, lag_days=0)
+        report = reassessment.render_report(clean, audit, result, report_metadata(), [])
+        labels = "\n".join(model["label"] for model in result["models"])
+        for obsolete_word in ("기존", "이전", "재분석", "DB 정리", "legacy"):
+            with self.subTest(word=obsolete_word):
+                self.assertNotIn(obsolete_word, report)
+                self.assertNotIn(obsolete_word, labels)
+        self.assertEqual(result["primary"]["n"], len(result["matched"]))
+        self.assertIn("포함된 관측월", report)
+        self.assertIn("중앙 50%", report)
+        self.assertIn("세부 구간의 정밀도", report)
+
+    def test_empty_common_support_produces_explicit_unavailable_report(self):
+        fixtures = {
+            "disjoint floors": [transaction(1, floor=2),
+                                transaction(2, reassessment.IP, floor=20)],
+            "disjoint months": [transaction(1, date="2025-02-01"),
+                                transaction(2, reassessment.IP, date="2025-03-01")],
+            "one complex": [transaction(1)],
+        }
+        for scenario, rows in fixtures.items():
+            with self.subTest(scenario=scenario):
+                _, clean, _, audit = prepare(rows)
+                result = reassessment.analyze(clean, START, AS_OF, lag_days=0)
+                self.assertTrue(result["common"].empty)
+                self.assertTrue(result["quarters"].empty)
+                self.assertTrue(result["matched_months"].empty)
+                self.assertNotIn("estimate", result["primary"])
+                json.dumps(result["models"], allow_nan=False)
+                report = reassessment.render_report(clean, audit, result, report_metadata(), [])
+                conclusion = report.split("## 1.")[0]
+                self.assertIn("비교 가능한 표본이 부족", conclusion)
+                self.assertIn("공통 관측월 없음", report)
+                self.assertNotIn("더 높은 가격에 거래됐다는 근거", conclusion)
 
     def test_rank_deficiency_does_not_produce_estimate_or_interval(self):
         _, clean, _, _ = market_fixture()

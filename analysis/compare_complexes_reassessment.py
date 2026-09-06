@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""두 단지 84㎡ 실거래 재분석. 원본 DB/기존 분석은 수정하지 않는다.
+"""두 단지 84㎡ 실거래의 가격 분포, 거래 구성, 조건부 가격 차이 분석.
 
 실행: conda run -n py312 python analysis/compare_complexes_reassessment.py --as-of 2026-09-06
 의존성: analysis/requirements.txt (차트가 필요 없으면 --no-charts)
@@ -213,7 +213,7 @@ def fit_gap(df: pd.DataFrame, label: str, formula: str, covariance: str = "clust
     return result
 
 
-def analyze(legacy, cleaned, start, as_of, lag_days=30, db_cleaned=None):
+def analyze(cleaned, start, as_of, lag_days=30):
     # Include only calendar months whose last day precedes the analyst's buffer.
     buffer_date = as_of - pd.Timedelta(days=lag_days)
     end_of_month = buffer_date + pd.offsets.MonthEnd(0)
@@ -222,12 +222,9 @@ def analyze(legacy, cleaned, start, as_of, lag_days=30, db_cleaned=None):
     matched = matched_cells(common)
     cells = cell_table(matched)
     primary_formula = "price ~ is_sk + C(cell)"
-    db_sample = cleaned if db_cleaned is None else db_cleaned
     models = [
-        fit_gap(legacy, "기존 방식 재현: 중복 포함·선형 시간/층", "price ~ is_sk + floor + days", "nonrobust"),
-        fit_gap(db_sample.dropna(subset=["floor"]), "DB 중복 정리 후 기존 식", "price ~ is_sk + floor + days", "HC3"),
-        fit_gap(common, "공통월·월/층구간 가산 보정", "price ~ is_sk + C(month) + C(floor_tier)"),
         fit_gap(matched, "주 분석: 공통 월×층구간", primary_formula),
+        fit_gap(common, "공통월·월/층구간 가산 보정", "price ~ is_sk + C(month) + C(floor_tier)"),
         fit_gap(matched, "주 분석의 HC3 구간", primary_formula, "HC3"),
         fit_gap(matched_cells(comparable_sample(cleaned, as_of)), "최근 잠정월 포함", primary_formula),
     ]
@@ -249,9 +246,6 @@ def analyze(legacy, cleaned, start, as_of, lag_days=30, db_cleaned=None):
         fit_gap(common, "월 보정·개별 층 범주", "price ~ is_sk + C(month) + C(floor)"),
         fit_gap(matched, "로그가격: 같은 월×층구간", "np.log(price) ~ is_sk + C(cell)"),
     ])
-    if db_cleaned is not None:
-        models.append(fit_gap(matched_cells(comparable_sample(db_cleaned, cutoff)),
-                              "DB 정리본으로 주 분석 재계산", primary_formula))
     # Sensitivity to a single observed month; this range is NOT a confidence interval.
     leave_one = []
     for month in sorted(matched["month"].unique()):
@@ -260,7 +254,60 @@ def analyze(legacy, cleaned, start, as_of, lag_days=30, db_cleaned=None):
     monthly = month_table(cleaned, start, as_of)
     monthly["provisional"] = pd.to_datetime(monthly["month"]) + pd.offsets.MonthEnd(0) > cutoff
     return {"cutoff": cutoff, "common": common, "matched": matched, "cells": cells,
-            "models": models, "monthly": monthly, "leave_one_month_out": leave_one}
+            "primary": models[0], "models": models, "monthly": monthly,
+            "distributions": distribution_table(cleaned, common),
+            "quarters": quarter_table(common), "floors": floor_table(common, cells),
+            "matched_months": matched_month_table(cells),
+            "leave_one_month_out": leave_one}
+
+
+def distribution_table(cleaned, common):
+    rows = []
+    for scope, sample in [("전체 유효 거래", cleaned), ("공통월·공통 층 범위", common)]:
+        for name in NAMES:
+            sub = sample[sample["aptNm"] == name]
+            prices = sub["price"]
+            rows.append({"scope": scope, "aptNm": name, "n": len(sub),
+                         "mean": prices.mean(), "median": prices.median(),
+                         "q25": prices.quantile(0.25), "q75": prices.quantile(0.75),
+                         "min": prices.min(), "max": prices.max()})
+    return pd.DataFrame(rows)
+
+
+def quarter_table(common):
+    columns = ["quarter", "months", "sk_n", "ip_n", "sk_median", "ip_median", "gap_median"]
+    rows = []
+    for quarter, sub in common.groupby(common["dealDate"].dt.to_period("Q")):
+        a, b = (sub[sub["aptNm"] == name]["price"] for name in NAMES)
+        rows.append([str(quarter), ", ".join(sorted(sub["month"].unique())), len(a), len(b),
+                     a.median(), b.median(), a.median() - b.median()])
+    return pd.DataFrame(rows, columns=columns)
+
+
+def floor_table(common, cells):
+    rows = []
+    totals = common["aptNm"].value_counts()
+    for tier in TIERS:
+        sub = common[common["floor_tier"] == tier]
+        a, b = (sub[sub["aptNm"] == name]["price"] for name in NAMES)
+        matched = cells[cells["floor_tier"] == tier]
+        rows.append({"floor_tier": tier, "sk_n": len(a), "ip_n": len(b),
+                     "sk_share_pct": len(a) / totals[SK] * 100 if totals.get(SK, 0) else np.nan,
+                     "ip_share_pct": len(b) / totals[IP] * 100 if totals.get(IP, 0) else np.nan,
+                     "sk_median": a.median(), "ip_median": b.median(),
+                     "matched_sk_n": matched["sk_n"].sum(), "matched_ip_n": matched["ip_n"].sum(),
+                     "matched_months": matched["month"].nunique(),
+                     "matched_gap": np.average(matched["gap"], weights=matched["weight"]) if len(matched) else np.nan})
+    return pd.DataFrame(rows)
+
+
+def matched_month_table(cells):
+    columns = ["month", "sk_n", "ip_n", "cells", "weighted_gap"]
+    rows = []
+    for month, sub in cells.groupby("month"):
+        rows.append([month, sub["sk_n"].sum(), sub["ip_n"].sum(), len(sub),
+                     np.average(sub["gap"], weights=sub["weight"])])
+    return pd.DataFrame(rows, columns=columns)
 
 
 def fmt(value, digits=3):
@@ -275,39 +322,28 @@ def markdown_table(headers, rows):
                      ["| " + " | ".join(map(escape, row)) + " |" for row in rows])
 
 
-def summary_rows(samples):
-    rows = []
-    for label, data in samples:
-        a, b = (data[data["aptNm"] == name]["price"] for name in NAMES)
-        rows.append([label, len(a), len(b), fmt(a.mean()), fmt(b.mean()),
-                     fmt(a.mean() - b.mean()), fmt(a.median() - b.median())])
-    return rows
-
-
-def render_report(legacy, clean, duplicates, audit, result, metadata, charts, db_cleaned=None):
+def render_report(clean, audit, result, metadata, charts):
+    """A standalone assessment; every numeric statement uses the selected data."""
     monthly, cells = result["monthly"], result["cells"]
+    common, matched = result["common"], result["matched"]
     paired = monthly[(monthly["sk_n"] > 0) & (monthly["ip_n"] > 0)]
-    primary = result["models"][3]
-    n_months = int(primary["months"])
+    primary = result["primary"]
     if "estimate" not in primary:
-        conclusion = "비교 가능한 표본이 부족하여 주 분석의 보정 가격 차이를 산출하지 않았습니다."
+        conclusion = "비교 가능한 표본이 부족하여 월·층구간을 맞춘 가격 차이를 산출하지 않았습니다."
     else:
-        interval = f"모형 기반 95% 구간 {fmt(primary.get('ci_low'))}~{fmt(primary.get('ci_high'))}억원"
-        conclusion = f"주 분석의 SKVIEW−센트럴아이파크자이 평균가격 차이는 **{primary['estimate']:+.3f}억원**입니다({interval})."
+        interval = (f"모형 기반 95% 구간 {fmt(primary['ci_low'])}~{fmt(primary['ci_high'])}억원"
+                    if "ci_low" in primary else "표본이 부족하여 95% 구간은 제시하지 않음")
+        conclusion = f"같은 월·층구간에 양쪽 거래가 있는 표본의 SKVIEW−센트럴아이파크자이 평균가격 차이는 **{primary['estimate']:+.3f}억원**입니다({interval})."
         if primary.get("ci_low", -np.inf) > 0:
-            conclusion += " 관측된 비교 표본에서 SKVIEW가 더 높은 가격에 거래됐다는 근거는 남습니다."
+            conclusion += " 관측된 비교 표본에서 SKVIEW가 더 높은 가격에 거래됐다는 근거가 있습니다."
         elif primary.get("ci_high", np.inf) < 0:
             conclusion += " 관측된 비교 표본에서 센트럴아이파크자이가 더 높은 가격에 거래됐다는 근거가 있습니다."
         else:
-            conclusion += " 방향을 단정할 만큼 정밀한 구간 추정은 확보되지 않았습니다."
-    db_sample = clean if db_cleaned is None else db_cleaned
-    rows = summary_rows([("기존 DB 표본 재현", legacy), ("DB 공개 거래키 중복 정리", db_sample),
-                         ("주 분석 원자료: " + metadata.get("source", "db"), clean),
-                         ("관측월/층 범위 공통·잠정월 제외", result["common"]),
-                         ("주 분석에 포함된 월×층구간", result["matched"])])
-    model_rows = [[m["label"], f"{m['sk_n']}/{m['ip_n']}", m["months"], fmt(m.get("estimate")),
-                   f"{fmt(m.get('ci_low'))} ~ {fmt(m.get('ci_high'))}", m["unit"], m["covariance"], m["status"]]
-                  for m in result["models"]]
+            conclusion += " 차이의 방향을 단정할 만큼 정밀한 구간 추정은 확보되지 않았습니다."
+
+    def chart(filename):
+        return next((f"![{title}](charts/{file})" for title, file in charts if file == filename), "")
+
     coverage = []
     for name in NAMES:
         sub = clean[clean["aptNm"] == name]
@@ -315,114 +351,236 @@ def render_report(legacy, clean, duplicates, audit, result, metadata, charts, db
                          str(sub["dealDate"].max().date()) if len(sub) else "—", sub["month"].nunique(),
                          ", ".join(str(x) for x in sorted(sub["excluUseAr"].unique())),
                          int(sub["dealType"].eq("직거래").sum()), int(sub["dealType"].isin(["미상", "충돌"]).sum())])
+    dist = result["distributions"]
+    def distribution_rows(scope):
+        return [[r.aptNm, r.n, fmt(r.mean), fmt(r.median), f"{fmt(r.q25)}~{fmt(r.q75)}",
+                 f"{fmt(r.min)}~{fmt(r.max)}"] for r in dist[dist["scope"] == scope].itertuples()]
+
+    a = common[common["aptNm"] == SK]["price"]
+    b = common[common["aptNm"] == IP]["price"]
+    distribution_note = "기간과 층 범위가 겹치는 거래가 부족하여 공통 표본의 가격 분포를 평가하기 어렵습니다."
+    if len(a) and len(b):
+        distribution_note = (
+            f"공통 표본의 중위가격은 SKVIEW **{fmt(a.median())}억원**, 센트럴아이파크자이 **{fmt(b.median())}억원**으로, "
+            f"차이는 {fmt(a.median() - b.median())}억원입니다. 평균 차이는 {fmt(a.mean() - b.mean())}억원입니다. "
+        )
+        if a.quantile(.25) > b.quantile(.75):
+            distribution_note += "SKVIEW의 중앙 50% 가격 구간 하단이 센트럴아이파크자이의 중앙 50% 구간 상단보다 높아, 거래가 집중된 가격대에도 차이가 나타납니다. "
+        elif b.quantile(.25) > a.quantile(.75):
+            distribution_note += "센트럴아이파크자이의 중앙 50% 가격 구간 하단이 SKVIEW의 중앙 50% 구간 상단보다 높아, 거래가 집중된 가격대에도 차이가 나타납니다. "
+        else:
+            distribution_note += "두 단지의 중앙 50% 가격 구간은 서로 겹칩니다. "
+        if max(a.min(), b.min()) <= min(a.max(), b.max()):
+            distribution_note += "전체 최저~최고 범위는 겹치므로 개별 거래의 가격 순서가 항상 같다는 뜻은 아닙니다."
+    quarter_rows = [[r.quarter, r.months, f"{r.sk_n}/{r.ip_n}", fmt(r.sk_median),
+                     fmt(r.ip_median), fmt(r.gap_median)] for r in result["quarters"].itertuples()]
+    recent_quarters = result["quarters"].tail(4)
+    quarter_note = "공통 관측 분기가 부족하여 가격대의 이동을 평가하기 어렵습니다."
+    if len(recent_quarters) >= 2:
+        sk_path = " → ".join(fmt(v) for v in recent_quarters["sk_median"])
+        ip_path = " → ".join(fmt(v) for v in recent_quarters["ip_median"])
+        quarter_note = (f"최근 {len(recent_quarters)}개 분기 관측구간({recent_quarters.iloc[0]['quarter']}~"
+                        f"{recent_quarters.iloc[-1]['quarter']})의 중위가격은 SKVIEW가 **{sk_path}억원**, "
+                        f"센트럴아이파크자이가 **{ip_path}억원**입니다. ")
+        if recent_quarters["sk_median"].diff().dropna().gt(0).all():
+            quarter_note += "이 구간에서 SKVIEW의 관측 중위가격은 순차적으로 높아집니다. "
+        elif recent_quarters["sk_median"].diff().dropna().lt(0).all():
+            quarter_note += "이 구간에서 SKVIEW의 관측 중위가격은 순차적으로 낮아집니다. "
+        quarter_note += "이는 거래된 주택의 가격 분포 변화이며 같은 주택을 반복 관측한 결과는 아닙니다."
+    floor_rows = [[r.floor_tier, f"{r.sk_n} ({fmt(r.sk_share_pct, 1)}%)",
+                   f"{r.ip_n} ({fmt(r.ip_share_pct, 1)}%)", fmt(r.sk_median), fmt(r.ip_median),
+                   f"{r.matched_sk_n}/{r.matched_ip_n}", r.matched_months, fmt(r.matched_gap)]
+                  for r in result["floors"].itertuples()]
+    high = result["floors"].iloc[-1]
+    floor_note = (f"공통 표본의 고층 거래 비중은 SKVIEW {fmt(high.sk_share_pct, 1)}%, "
+                  f"센트럴아이파크자이 {fmt(high.ip_share_pct, 1)}%입니다. "
+                  "거래된 층 구성이 다르므로 전체 평균만으로 단지 간 가격 차이를 평가하기에는 한계가 있습니다. "
+                  "같은 층구간에도 실제 층·동·향·주택 상태의 차이가 남습니다.")
+
+    # Describe the latest complete observed month and its matched observations,
+    # explicitly retaining their different populations and estimands.
+    complete = paired[~paired["provisional"]]
+    latest_note = "잠정월을 제외하면 양쪽 가격을 함께 관측한 달이 없습니다."
+    if len(complete):
+        last = complete.iloc[-1]
+        latest_note = (f"잠정월을 제외한 최근 공통 관측월 **{last['month']}**의 전 층 유효 거래는 "
+                       f"SKVIEW {int(last['sk_n'])}건, 센트럴아이파크자이 {int(last['ip_n'])}건입니다. "
+                       f"각 중위가격은 {fmt(last['sk_median'], 2)}억원과 {fmt(last['ip_median'], 2)}억원, "
+                       f"차이는 **{fmt(last['gap_median'], 2)}억원**입니다. ")
+        row = result["matched_months"][result["matched_months"]["month"] == last["month"]]
+        if len(row):
+            r = row.iloc[0]
+            latest_note += (f"이 달에서 같은 층구간끼리 비교한 가중평균 차이는 **{fmt(r.weighted_gap)}억원**"
+                            f"(SK {int(r.sk_n)}건/센트럴 {int(r.ip_n)}건)입니다. "
+                            "표본과 통계량이 다르므로 두 수치의 차이 전체를 층수 보정 효과로 해석할 수 없습니다. "
+                            "월 중위가격의 차이가 커졌다는 사실만으로 같은 조건의 주택 간 격차도 확대됐다고 판단하기 어렵습니다.")
+    provisional = paired[paired["provisional"]]
+    provisional_note = "기준일 부근에 양쪽 거래를 함께 관측한 잠정월은 없습니다."
+    if len(provisional):
+        p = provisional.iloc[-1]
+        provisional_note = (f"잠정월 {p['month']}에는 SKVIEW {int(p.sk_n)}건·센트럴아이파크자이 {int(p.ip_n)}건이 있으며, "
+                            f"중위가격 차이는 {fmt(p.gap_median, 2)}억원입니다. "
+                            "추가 신고와 해제 반영으로 표본이 바뀔 수 있어 주 분석과 분리해 표시합니다.")
+
+    extreme_rows = []
+    extreme_notes = []
+    for name in NAMES:
+        sub = common[common["aptNm"] == name]
+        if len(sub):
+            row = sub.loc[sub["price"].idxmin()]
+            extreme_rows.append([name, row["dealDate"].strftime("%Y-%m-%d"), int(row["floor"]),
+                                 fmt(row["price"], 2), row["dealType"]])
+            month_prices = sub.loc[sub["month"] == row["month"], "price"]
+            short_name = "SKVIEW" if name == SK else "센트럴아이파크자이"
+            extreme_notes.append(f"{short_name}의 해당 월({row['month']}) 공통 표본 {len(month_prices)}건의 "
+                                 f"평균은 {fmt(month_prices.mean(), 2)}억원, 중위가격은 {fmt(month_prices.median(), 2)}억원입니다.")
+    model_rows = [[m["label"], f"{m['sk_n']}/{m['ip_n']}", m["months"], fmt(m.get("estimate")),
+                   f"{fmt(m.get('ci_low'))}~{fmt(m.get('ci_high'))}", m["unit"],
+                   "산출" if m["status"] == "ok" else m["status"]] for m in result["models"]]
+    estimates = [m["estimate"] for m in result["models"] if m["unit"] == "억원" and "estimate" in m]
+    sensitivity_note = "표본/모형별 가격 차이를 충분히 산출하지 못했습니다."
+    if estimates:
+        sensitivity_note = f"계산 가능한 원화 모형들의 점추정은 {min(estimates):.3f}~{max(estimates):.3f}억원입니다. "
+        if min(estimates) > 0:
+            sensitivity_note += "검토한 조건에서는 SKVIEW가 더 높은 가격에 거래되는 방향이 유지됩니다."
+        elif max(estimates) < 0:
+            sensitivity_note += "검토한 조건에서는 센트럴아이파크자이가 더 높은 가격에 거래되는 방향이 유지됩니다."
+        else:
+            sensitivity_note += "선택한 표본이나 모형에 따라 가격 차이의 방향이 달라집니다."
+        sensitivity_note += " 이 범위는 민감도 범위이며 신뢰구간이 아닙니다."
+    leave = [r["estimate"] for r in result["leave_one_month_out"] if r["estimate"] is not None]
+    leave_text = f"{min(leave):.3f}~{max(leave):.3f}억원" if leave else "산출 불가"
+    sparse_cells = int((cells[["sk_n", "ip_n"]].min(axis=1) == 1).sum())
+    well_sampled_cells = int((cells[["sk_n", "ip_n"]].min(axis=1) >= 3).sum())
+    positive_cells = int(cells["gap"].gt(0).sum())
+    negative_cells = int(cells["gap"].lt(0).sum())
+    precision_note = ("세부 월·층구간의 작은 표본 때문에 개별 구간의 가격 차이 크기는 신중하게 해석해야 합니다."
+                      if len(cells) else "비교 가능한 월·층구간이 없어 가격 차이에 대한 평가를 보류합니다.")
+    area_note = "면적 범위를 제한했지만 세부 면적/평면 차이를 별도로 보정하지 않았습니다."
+    if clean.groupby("aptNm")["excluUseAr"].nunique().eq(1).all():
+        area_note = "단지마다 전용면적이 한 값뿐이므로 면적 효과와 단지 효과를 따로 식별할 수 없습니다."
+    if metadata.get("source") == "csv":
+        ca = metadata["csv_audit"]
+        source_note = (f"국토교통부 실거래가 공개 자료의 CSV 스냅샷에서 대상 기간·단지·면적에 해당하는 "
+                       f"{ca['date_selected_rows']}행을 확인했습니다. 해제 행 {ca['cancelled_rows']}건과 "
+                       f"유효 행의 중복 후보 {ca['active_duplicate_rows_removed']}행을 제외하여 **{len(clean)}건**을 사용합니다. "
+                       f"가격 오류로 제외한 행은 {ca['invalid_price_rows']}건입니다. "
+                       "같은 공개 키에 해제 행과 유효 행이 함께 있는 경우 원본의 상태를 각각 보존하고 유효 행을 사용합니다.")
+    else:
+        source_note = (f"SQLite에 저장된 대상 거래에서 공개 거래키를 정규화하고 중복 {audit['duplicate_rows_removed']}행, "
+                       f"취소/해제 키 {audit['cancelled_keys_removed']}건을 제외한 **{len(clean)}건**을 사용합니다. "
+                       "중복행 중 어느 하나에 취소 정보가 있으면 해당 키를 제외합니다.")
     month_rows = [[r.month, f"{r.sk_n}/{r.ip_n}", fmt(r.sk_median, 2), fmt(r.ip_median, 2),
                    fmt(r.gap_median, 2), "잠정" if r.provisional else ("희소" if min(r.sk_n, r.ip_n) < 3 else "")]
                   for r in monthly.itertuples()]
-    leave = [r["estimate"] for r in result["leave_one_month_out"] if r["estimate"] is not None]
-    leave_text = f"{min(leave):.3f}~{max(leave):.3f}억원" if leave else "산출 불가"
-    weighted = np.average(cells["gap"], weights=cells["weight"]) if len(cells) else np.nan
-    support = f"{len(result['common'])}건 중 {len(result['matched'])}건, {len(cells)}개 월×층구간, {n_months}개월"
-    graph = "\n\n".join(f"![{title}](charts/{file})" for title, file in charts)
-    area_note = "전용면적/세부 평면은 보정하지 않았습니다. 면적 구성이 변하면 추가 모형 점검이 필요합니다."
-    if clean.groupby("aptNm")["excluUseAr"].nunique().eq(1).all():
-        area_note = "단지별 전용면적이 한 값뿐이라 단지 지표와 겹칩니다. 면적 계수를 별도로 식별할 수 없어 회귀에 넣지 않았습니다."
-    source_note = "주 분석은 DB 정리본을 사용합니다. 원본 CSV의 해제/유효 재신고 상태는 복원하지 않은 결과입니다."
-    if metadata.get("source") == "csv":
-        source_note = (
-            f"**주 분석은 원본 CSV 스냅샷의 유효 행 {len(clean)}건을 사용합니다.** "
-            f"CSV 유효 키 중 DB 정리본에 없는 것은 {audit['csv_not_in_db_keys']}건, "
-            f"DB 정리본에만 있는 것은 {audit['db_not_in_csv_keys']}건입니다. "
-            "CSV에는 같은 공개 키의 해제 행과 유효 행이 함께 있을 수 있습니다. "
-            "이를 단일 계약으로 합쳐 해제 우선 처리하지 않고, 원본에서 해제 행을 먼저 제외합니다. "
-            "동/등기일/원본 행 번호를 보존하며 남은 유효 키의 반복만 중복 후보로 정리합니다. "
-            "[CSV 상태 감사](csv_status_audit.csv), [CSV–DB 차이](csv_db_difference.csv), "
-            "`results.json`의 파일별 해시를 통해 확인할 수 있습니다. "
-            "기존 DB에는 없는 동 번호를 확보했지만 단지마다 서로 다른 동이므로 같은 주택 조건을 보장하지 않습니다."
-        )
-    return f"""# 매교역푸르지오SKVIEW vs 수원센트럴아이파크자이: 84㎡ 실거래 재분석
+    common_period = (f"{common['month'].min()}~{common['month'].max()}의 공통 관측월 {common['month'].nunique()}개월"
+                     if len(common) else "공통 관측월 없음")
+    floor_range = (f"{int(common['floor'].min())}~{int(common['floor'].max())}층" if len(common) else "층 범위 없음")
+
+    return f"""# 매교역푸르지오SKVIEW·수원센트럴아이파크자이 84㎡ 실거래 분석
 
 {conclusion}
 
-다만 기존 보고서의 순수 입지 프리미엄, 평균회귀, 최적 매수 시점, 환금성 우월 주장은 이 데이터와 분석으로 입증되지 않습니다. **높게 거래됐다는 관찰과 더 좋은 투자라는 판단은 별개의 주장입니다.**
+평가의 핵심은 **거래가 집중된 가격대의 차이, 시기와 층 구성에 따른 변동, 관측 표본의 충분성**입니다. 가격 차이는 관측된 거래 특성을 반영한 값이며 개별 주택의 적정가격이나 향후 수익률을 뜻하지 않습니다.
 
-## 1. 범위와 데이터 감사
-
-- 계약일 범위: {metadata['start_date']}~{metadata['as_of']}; 전용면적 84.0㎡ 이상 85.0㎡ 미만.
-- 현재 로컬 DB/CSV 스냅샷을 분석했습니다. `--as-of`는 계약일 상한이며 당시 신고 상태를 복원하는 옵션은 아닙니다.
-- 최근 {metadata['lag_days']}일을 관측 지연 완충기간으로 두고, 그 이전에 끝난 달만 주 분석에 사용: **{result['cutoff'].date()}까지**. 30일 기본값은 분석상 선택이며 신고 완료를 보증하지 않습니다. 잠정월 포함 결과도 아래에 제시했습니다.
-- DB 감사: 날짜 필터 후 {audit['date_selected_rows']}행; 날짜 오류 {audit['invalid_date_rows']}행, 면적 제외 {audit['outside_or_invalid_area_rows']}행, 가격 오류 {audit['invalid_price_rows']}행, 층수 오류 {audit['invalid_floor_rows']}행.
-- DB의 동일 공개 거래키 **{audit['duplicate_groups']}개 그룹에서 중복 {audit['duplicate_rows_removed']}행**을 합쳤고, 취소/해제 정보가 있는 {audit['cancelled_keys_removed']}개 키를 제외하여 DB 정리본 {audit['clean_rows']}건을 남겼습니다.
-- 키: 계약일·지역코드·법정동·지번·단지·층·전용면적·금액. 연/월/일 문자열의 0 채움 차이를 제거합니다. 최근 메타데이터와 알려진 거래유형을 사용하고 어느 중복행에든 취소 정보가 있으면 해당 키를 제외합니다.
-- DB에 동·호/계약 식별자가 없어 동일 조건의 서로 다른 실제 거래를 구분할 수 없습니다. 중복 후보 원행은 [duplicate_candidates.csv](duplicate_candidates.csv)에 보존하고, 중복을 유지한 결과도 비교표에 남겼습니다. 기존 DB의 UNIQUE/덮어쓰기 과정에서 사라진 행은 DB 정리만으로 복구할 수 없습니다.
+## 1. 데이터 범위와 관측 여건
 
 {source_note}
 
-{markdown_table(['단지', '건수', '첫 관측 계약일', '마지막 관측 계약일', '관측월 수', '실제 면적(㎡)', '직거래', '유형 미상/충돌'], coverage)}
+계약일 범위는 **{metadata['start_date']}~{metadata['as_of']}**, 전용면적은 84.0㎡ 이상 85.0㎡ 미만입니다. 현재 확보한 스냅샷의 계약일을 제한한 것으로, 과거 시점의 신고 상태를 복원한 자료는 아닙니다. 최근 {metadata['lag_days']}일의 관측 지연을 고려하여 완충기간 시작일까지 종료된 달, 즉 **{result['cutoff'].date()}까지**를 주 분석에 사용합니다. 완충기간은 신고 완료를 보장하지 않습니다.
 
-관측 0건은 선택한 원자료에 유효 거래가 없다는 뜻이며 실제 시장의 거래 부재나 수집 완전성을 보장하지 않습니다. 두 단지의 공통 거래월은 {len(paired)}개월이고, 그중 한쪽이 3건 미만인 달은 {int((paired[['sk_n', 'ip_n']].min(axis=1) < 3).sum())}개월입니다. 양쪽 각 5건 이상인 달은 전체 범위에서 {int((paired[['sk_n', 'ip_n']].min(axis=1) >= 5).sum())}개월입니다.
+{markdown_table(['단지', '유효 건수', '첫 관측 계약일', '마지막 관측 계약일', '관측월 수', '실제 면적(㎡)', '직거래', '유형 미상/충돌'], coverage)}
 
-## 2. 기존 숫자와 비교
+두 단지에 거래가 함께 있는 달은 전체 범위에서 {len(paired)}개월입니다. 그중 한쪽이 3건 미만인 달은 {int((paired[['sk_n', 'ip_n']].min(axis=1) < 3).sum())}개월, 양쪽 각 5건 이상인 달은 {int((paired[['sk_n', 'ip_n']].min(axis=1) >= 5).sum())}개월입니다. **거래 수가 적은 달의 중위가격은 소수 거래의 조건에 크게 좌우됩니다.** 관측 0건은 자료에 유효 거래가 없다는 뜻이며 실제 시장의 거래 부재나 수집 완전성을 보장하지 않습니다.
 
-금액 단위는 억원, 차이는 항상 SKVIEW−센트럴아이파크자이입니다. 각 행은 표본이 달라지므로 차이의 변화를 모두 보정 효과로 해석하면 안 됩니다. 기존 표본은 현재 DB에서 기존 필터와 회귀식을 재현한 값이며 과거 보고서를 파싱한 값은 아닙니다.
+## 2. 가격 수준과 분포
 
-{markdown_table(['표본', 'SK 건수', '센트럴 건수', 'SK 평균', '센트럴 평균', '평균 차이', '전체 중위 차이'], rows)}
+두 단지 전체 유효 거래의 분포는 다음과 같습니다. 금액은 모두 억원이며, 중앙 50%는 25~75분위 구간입니다. 두 단지의 관측 기간과 월별 거래 비중이 달라 이 표만으로 같은 시점의 주택 가격을 비교할 수는 없습니다.
 
-전체 거래의 중위 차이와 월별 중위 차이의 평균은 다른 통계입니다. 중복 정리 후 공통 관측월을 동일 가중한 월별 중위 차이의 평균은 **{fmt(paired['gap_median'].mean())}억원**입니다. 월별 최소·최대는 관측 범위일 뿐 안정적 밴드나 미래 경계가 아닙니다.
+{markdown_table(['단지', '건수', '평균', '중위', '중앙 50%', '최저~최고'], distribution_rows('전체 유효 거래'))}
 
-## 3. 월과 층 구성이 비교 가능한 거래
+가격 수준을 비교할 때는 **{common_period}, {floor_range}**의 거래로 제한합니다. 공통 표본은 같은 관측월과 겹치는 층 범위를 사용하지만, 월·층별 거래 비중까지 같게 만든 표본은 아닙니다.
 
-주 분석은 잠정월을 제외하고 양쪽에 거래가 있는 월, 양쪽의 관측 층 범위가 겹치는 범위를 사용합니다. 그 안에서도 같은 월×층구간에 양쪽 거래가 있을 때만 비교합니다. 층구간은 1~5층, 6~15층, 16층 이상입니다. 포함 범위는 **{support}**입니다. 제외된 구간의 주택으로 결과를 일반화할 수 없습니다.
+{markdown_table(['단지', '공통 표본 건수', '평균', '중위', '중앙 50%', '최저~최고'], distribution_rows('공통월·공통 층 범위'))}
 
-각 구간의 평균 차이를 `n_SK × n_센트럴 / (n_SK + n_센트럴)`로 가중했습니다. 표본이 한쪽에 치우친 구간의 영향은 작아집니다. 직접 집계 값은 **{fmt(weighted)}억원**이며 `가격 ~ 단지 + C(월×층구간)` 회귀 계수와 일치해야 합니다. 이는 같은 구간의 관측 거래 차이이며 같은 동·향·상태의 주택 비교는 아닙니다.
+{distribution_note}
 
-95% 구간은 월별 오차 의존을 허용한 군집 표준오차, 소표본 보정, 월 수−1 자유도의 t 분포로 계산했습니다. 월이 6개 미만이면 군집 구간을 생략합니다. 이 기준도 분석상 최소 조건일 뿐 충분한 정밀도를 보장하지 않습니다. 월 간 자기상관, 거래 선택 편향, 누락 변수, 중복 판정 오류는 이 구간에 반영되지 않습니다. HC3 구간은 거래별 독립성을 더 강하게 가정한 비교용입니다. 구현 기준은 [statsmodels 공식 문서](https://www.statsmodels.org/dev/generated/statsmodels.regression.linear_model.OLSResults.get_robustcov_results.html)를 따릅니다.
+{chart('price_distribution.png')}
 
-## 4. 모형과 표본을 바꿨을 때
+공통 표본에서 가장 낮은 거래의 조건은 다음과 같습니다. 최저가 하나를 단지의 대표 가격으로 해석하기보다 거래유형과 층을 함께 확인할 필요가 있습니다.
 
-{markdown_table(['분석', 'SK/센트럴 건수', '월 수', '추정 차이', '95% 구간', '단위', '오차 처리', '상태'], model_rows)}
+{markdown_table(['단지', '계약일', '층', '가격(억)', '거래유형'], extreme_rows)}
 
-- 주 분석에서 한 달씩 제외한 추정 범위: **{leave_text}**. 민감도 범위이며 신뢰구간이 아닙니다.
-- 직거래는 주 분석에 포함하고 별도 제외 결과를 제공합니다. 낮은 가격만으로 비정상 거래라고 판정하지 않습니다. 1% 절삭은 단지별 공통 표본의 분위수 기준이며 민감도 확인용입니다.
-- 각 3/5건 기준은 겹치는 층 범위로 제한한 뒤, 월×층구간 매칭 전에 적용합니다. 매칭 후 실제 비교 거래 수는 더 작을 수 있습니다.
-- 로그 모형은 `100 × (exp(계수)−1)`인 조건부 기하평균 가격 차이(%)입니다. 산술평균 차이나 개별 매물 수익률이 아닙니다.
-- {area_note} 세부 평면·향·동·조망·수리상태·입주권/분양권 이력·매도 사유도 보정하지 못합니다.
-- 모형 간 차이는 함수 형태와 비교 표본의 변화에 대한 민감도입니다. 결과 중 유리한 값만 선택해서는 안 됩니다.
+{' '.join(extreme_notes)} 평균과 중위가격을 함께 보면 소수 저가 거래가 월별 대표가격에 미치는 영향을 확인할 수 있습니다.
 
-## 5. 기존 해석에 대한 판단
+낮은 가격만으로 오류나 특수관계인 거래라고 판단하지 않습니다. 직거래와 분포 양끝의 가격을 제외하는 민감도 분석을 별도로 제공합니다.
 
-| 기존 주장 | 재분석 판단 | 추가로 필요한 근거 |
-| --- | --- | --- |
-| 순수 브랜드/입지 프리미엄이 고착 | 가격 차이는 추정 가능하나 원인 분리는 불가 | 동·향·상태 등 주택 특성과 인과 식별 설계 |
-| p값으로 99.9% 가격 서열 입증 | p값은 서열의 확률이나 인과 증명이 아님 | 효과 크기, 가정, 불확실성의 공동 검토 |
-| 0.3~1.6억 안정 밴드·평균회귀 | 최소·최대 집계만으로 확인 불가 | 충분히 긴 공통 시계열, 안정성/회귀 검정과 외부 기간 검증 |
-| SK가 1~2개월 선도 | 기존 코드에 시차 검정이 없음 | 시장 공통 요인 제거, 시차 모형과 표본 밖 검증 |
-| 중층보다 고층 프리미엄 극대화 | 다른 단지와의 구간별 격차만으로 층 선택 효과를 알 수 없음 | 단지×층 상호작용과 신뢰구간, 동일 조건 비교 |
-| 거래량이 많아 환금성 우월 | 원시 건수에 중복/관측기간 차이가 있으며 거래건수만으로 판정 불가 | 84㎡ 세대수, 매물 수, 매각기간, 매도 할인율 |
-| 0.3억 이내 갈아타기·0.8~1억 이상 과열 | 기준을 검증한 백테스트가 없어 매수 규칙으로 채택 불가 | 거래비용과 자금조건을 포함한 기간 외 성과 검증 |
+## 3. 시기별 가격과 거래 구성
 
-p값을 가설이 참일 확률이나 효과의 중요도로 해석할 수 없다는 기준은 [미국통계학회 성명](https://www.amstat.org/asa/files/pdfs/p-valuestatement.pdf)에 근거합니다. 위 투자·인과 주장은 검증되지 않았다는 판단이며 반대 주장이 입증됐다는 뜻도 아닙니다.
+아래 표는 공통 표본을 분기별로 집계한 것입니다. **표에 적힌 관측월만 포함**하므로 온전한 분기의 시장지수는 아닙니다. 거래 구성에 따라 중위가격이 달라질 수 있어 동일 주택의 가격 상승률로 해석하지 않습니다.
 
-## 6. 월별 관측값
+{markdown_table(['분기', '포함된 관측월', 'SK/센트럴 건수', 'SK 중위(억)', '센트럴 중위(억)', '중위 차이(억)'], quarter_rows)}
 
-희소 표시는 한쪽 3건 미만, 잠정 표시는 관측 완충기간 때문에 주 분석에서 제외한 월입니다. 거래가 없는 달의 가격/격차는 결측으로 남깁니다. 잠정월의 최근 가격만 보고 수렴·발산을 확정하지 않습니다.
+{quarter_note}
 
-{markdown_table(['월', 'SK/센트럴 건수', 'SK 중위(억)', '센트럴 중위(억)', '중위 차이(억)', '주의'], month_rows)}
+{latest_note}
 
-{graph}
+{provisional_note}
 
-## 7. 재현과 산출물
+{chart('monthly_observations.png')}
+
+## 4. 층 구성과 같은 조건 구간의 가격 차이
+
+{floor_note}
+
+아래 중위가격과 비중은 공통 표본 기준입니다. 마지막 열은 양쪽 거래가 있는 월×층구간만 남겨 구간별 평균 차이를 가중한 값입니다. 층구간마다 포함되는 월과 거래가 달라 마지막 열의 크기를 층수 자체의 효과로 비교해서는 안 됩니다.
+
+{markdown_table(['층구간', 'SK 건수(비중)', '센트럴 건수(비중)', 'SK 중위(억)', '센트럴 중위(억)', '매칭 SK/센트럴 건수', '매칭 월 수', '매칭 평균 차이(억)'], floor_rows)}
+
+주 분석에는 공통 표본 {len(common)}건 중 **{len(matched)}건(SKVIEW {primary['sk_n']}건·센트럴아이파크자이 {primary['ip_n']}건), {len(cells)}개 월×층구간, {primary['months']}개월**을 사용했습니다. 각 구간의 평균 차이를 `n_SK × n_센트럴 / (n_SK + n_센트럴)`로 가중하며, 이는 `가격 ~ 단지 + C(월×층구간)` 회귀의 단지 계수와 같습니다.
+
+{conclusion}
+
+구간별 평균 차이가 양수인 구간은 {positive_cells}개, 음수인 구간은 {negative_cells}개입니다. 다만 {sparse_cells}개 구간은 한쪽 거래가 1건뿐이고, 양쪽 각 3건 이상인 구간은 {well_sampled_cells}개입니다. 구간들이 같은 월의 시장 여건을 공유하므로 이 건수를 독립적인 반복 검증 횟수로 볼 수 없습니다. **{precision_note}**
+
+## 5. 거래 선택과 모형에 따른 민감도
+
+{sensitivity_note}
+
+{markdown_table(['조건', 'SK/센트럴 건수', '월 수', '추정 차이', '95% 구간', '단위', '상태'], model_rows)}
+
+한 달씩 제외한 주 분석의 추정 범위는 **{leave_text}**입니다. 특정 관측월 하나가 전체 결과에 미치는 영향을 점검한 값이며 신뢰구간은 아닙니다. 월별 각 3/5건 기준은 공통 층 범위로 제한한 뒤 월×층구간 매칭 전에 적용합니다. 단지별 양끝 1% 제외는 공통 표본의 가격 분위수를 사용한 민감도 확인이며 자동 오류 정제가 아닙니다.
+
+{chart('model_sensitivity.png')}
+
+## 6. 데이터에 대한 종합 평가
+
+- **대표 가격대:** {sensitivity_note}
+- **시기별 변화:** 분기별 표본의 중위가격은 거래가 집중된 가격대의 이동을 보여줍니다. 거래 주택과 층 구성이 달라 월 중위가격의 차이가 움직인 만큼 같은 조건 주택의 차이도 움직였다고 볼 수는 없습니다.
+- **세부 구간의 정밀도:** 매칭 구간 {len(cells)}개 중 {sparse_cells}개는 한쪽 거래가 1건입니다. 전체 표본의 가격 차이를 특정 동·층에 그대로 적용하기에는 관측이 부족합니다.
+- **거래 활동:** 관측 거래 수와 그 증감은 확인할 수 있습니다. 84㎡ 세대수, 매물 수, 매각 소요기간이 없어 회전율이나 매도 용이성을 계산할 수는 없습니다.
+
+{area_note} 동·향·조망·수리상태·세부 평면·매도 사유는 분석에서 보정하지 못했습니다. 따라서 관측된 가격 차이의 원인을 입지나 브랜드로 분리하거나, 향후 가격 차이와 투자 수익을 예측하는 데에는 추가 자료가 필요합니다.
+
+## 7. 산출 기준과 재현
+
+공개 거래키는 계약일·지역코드·법정동·지번·단지·층·전용면적·금액으로 구성합니다. 동·호/계약 고유번호가 충분하지 않아 동일 조건의 서로 다른 실제 거래를 완전히 구분할 수는 없습니다. 원자료의 행 번호와 제공되는 동·등기일 정보는 보존합니다.
+
+95% 구간은 월 안의 오차 의존을 허용한 군집 표준오차, 소표본 보정, 월 수−1 자유도의 t 분포로 계산했습니다. 월 군집이 6개 미만이면 구간을 생략합니다. 이 최소 조건도 충분한 정밀도를 보장하지 않으며 월 간 자기상관·거래 선택 편향·누락 변수는 구간에 반영되지 않습니다. HC3는 거래별 독립성을 더 강하게 가정한 보조 구간입니다. 구현은 [statsmodels 공식 문서](https://www.statsmodels.org/dev/generated/statsmodels.regression.linear_model.OLSResults.get_robustcov_results.html)를 따릅니다.
+
+로그가격의 결과는 `100 × (exp(계수)−1)`로 환산한 조건부 기하평균 가격 차이(%)입니다. 개별 거래의 수익률이나 산술평균 가격 차이와는 다릅니다.
 
 ```bash
 conda run -n py312 python analysis/compare_complexes_reassessment.py --as-of {metadata['as_of']} --start-date {metadata['start_date']} --lag-days {metadata['lag_days']} --source {metadata.get('source', 'db')}
 ```
 
-- [정리된 거래](cleaned_transactions.csv), [실제 주 분석 거래](matched_transactions.csv), [월별 집계](monthly.csv), [월×층구간 집계/가중치](matched_cells.csv)
-- [모형별 수치](model_comparison.csv), [한 달씩 제외한 결과](leave_one_month_out.csv), [감사·버전·설정·해시](results.json)
-- 입력 DB SHA-256: `{metadata['database_sha256']}`
-- 조회 원행 SHA-256: `{metadata['query_rows_sha256']}`
-- 실행 Python: `{metadata['python']}`
+[유효 거래](cleaned_transactions.csv), [가격 분포](price_distributions.csv), [분기별 관측](quarterly.csv), [층별 구성](floor_summary.csv), [월×층구간](matched_cells.csv), [월별 매칭 집계](matched_monthly.csv), [민감도 수치](model_comparison.csv), [한 달씩 제외한 결과](leave_one_month_out.csv), [설정·감사·원자료 해시](results.json)에서 수치를 확인할 수 있습니다. 실행 Python은 {metadata['python']}입니다.
 
-원본 `analysis/compare_complexes.py`, 기존 보고서와 DB 내용은 변경하지 않습니다. 이 결과는 저장된 실거래 표본의 비교이며 현재 호가나 향후 가격 전망을 추정하지 않습니다.
+## 부록. 월별 전 층 유효 거래
+
+월별 표는 전체 유효 거래를 사용합니다. 희소 표시는 한쪽 3건 미만, 잠정 표시는 주 분석의 관측 완충기간 때문에 제외한 월입니다. 거래가 없는 달의 가격과 차이는 결측으로 남깁니다.
+
+{markdown_table(['월', 'SK/센트럴 건수', 'SK 중위(억)', '센트럴 중위(억)', '중위 차이(억)', '주의'], month_rows)}
 """
 
 
@@ -441,6 +599,21 @@ def make_charts(result, output):
     plt.rcParams["axes.unicode_minus"] = False
     chart_dir = output / "charts"
     chart_dir.mkdir(exist_ok=True)
+    charts = []
+    if not result["common"].empty:
+        fig, ax = plt.subplots(figsize=(9, 5), constrained_layout=True)
+        rng = np.random.default_rng(0)
+        for i, (name, color) in enumerate([(SK, "#2563eb"), (IP, "#c65b20")], 1):
+            prices = result["common"].loc[result["common"]["aptNm"] == name, "price"]
+            ax.scatter(i + rng.uniform(-.15, .15, len(prices)), prices, alpha=.35, s=18, color=color)
+            ax.boxplot([prices], positions=[i], widths=.4, showfliers=False, manage_ticks=False,
+                       boxprops={"color": color}, medianprops={"color": "black", "linewidth": 2})
+        ax.set_xticks([1, 2], ["SKVIEW", "Central Ipark Xi"])
+        ax.set(ylabel="Price (KRW 100m)", title="Common observed months and overlapping floor range")
+        ax.grid(axis="y", alpha=.2)
+        fig.savefig(chart_dir / "price_distribution.png", dpi=160)
+        plt.close(fig)
+        charts.append(("공통 표본의 가격 분포: 점은 거래, 상자는 중앙 50%", "price_distribution.png"))
     m = result["monthly"]
     dates = pd.to_datetime(m["month"])
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True, constrained_layout=True)
@@ -448,7 +621,7 @@ def make_charts(result, output):
         axes[0].plot(dates, m[prefix + "_median"], ".-", label=label, color=color)
         shift = pd.Timedelta(days=-5 if prefix == "sk" else 5)
         axes[2].bar(dates + shift, m[prefix + "_n"], width=9, color=color, label=label)
-    axes[0].set(title="84㎡: monthly observations after duplicate reconciliation", ylabel="Median price (KRW 100m)")
+    axes[0].set(title="84㎡: monthly transaction prices and counts", ylabel="Median price (KRW 100m)")
     axes[0].legend()
     axes[1].plot(dates, m["gap_median"], ".-", color="#475569")
     scarce = (m[["sk_n", "ip_n"]].min(axis=1) < 3) & m["gap_median"].notna()
@@ -477,7 +650,7 @@ def make_charts(result, output):
         ax.grid(axis="x", alpha=0.2)
         fig.savefig(chart_dir / "model_sensitivity.png", dpi=160)
         plt.close(fig)
-    charts = [("월별 가격·격차·거래 수(붉은 영역: 잠정월)", "monthly_observations.png")]
+    charts.append(("월별 가격·격차·거래 수(붉은 영역: 잠정월)", "monthly_observations.png"))
     if estimates:
         charts.append(("모형·표본별 추정 차이와 구간", "model_sensitivity.png"))
     return charts
@@ -503,7 +676,7 @@ def main(argv=None):
     if not args.db_path.is_file():
         parser.error(f"DB 파일을 찾을 수 없습니다: {args.db_path}")
     raw = read_data(args.db_path)
-    legacy, db_clean, duplicates, audit = prepare_data(raw, start, as_of)
+    _, db_clean, duplicates, audit = prepare_data(raw, start, as_of)
     clean = db_clean
     csv_audit = {}
     if args.source == "csv":
@@ -522,7 +695,7 @@ def main(argv=None):
         audit["db_not_in_csv_keys"] = int(difference["_merge"].eq("right_only").sum())
     if clean["aptNm"].nunique() < 2:
         parser.error("정리 후 두 단지 모두에 거래가 있어야 합니다. 날짜/DB를 확인하세요.")
-    result = analyze(legacy, clean, start, as_of, args.lag_days, db_cleaned=db_clean)
+    result = analyze(clean, start, as_of, args.lag_days)
     output = args.output_dir
     # The reassessment must never overwrite the original generated report.
     if output.resolve() == (ROOT / "analysis/maegyo_skview_vs_central_ipark").resolve():
@@ -534,6 +707,8 @@ def main(argv=None):
     for name, frame in [("cleaned_transactions", clean), ("db_cleaned_transactions", db_clean), ("duplicate_candidates", duplicates),
                         ("matched_transactions", result["matched"]), ("monthly", result["monthly"]),
                         ("matched_cells", result["cells"]), ("model_comparison", pd.DataFrame(result["models"])),
+                        ("price_distributions", result["distributions"]), ("quarterly", result["quarters"]),
+                        ("floor_summary", result["floors"]), ("matched_monthly", result["matched_months"]),
                         ("leave_one_month_out", pd.DataFrame(result["leave_one_month_out"]))]:
         frame.to_csv(output / f"{name}.csv", index=False, encoding="utf-8-sig")
     metadata = {"start_date": args.start_date, "as_of": args.as_of, "lag_days": args.lag_days, "source": args.source,
@@ -543,14 +718,14 @@ def main(argv=None):
                 "query_rows_sha256": hashlib.sha256(raw.to_json(orient="split", force_ascii=False).encode()).hexdigest(),
                 "python": sys.version.split()[0], "executable": sys.executable,
                 "versions": {name: importlib.metadata.version(name) for name in ["pandas", "numpy", "statsmodels"]}}
-    document = {"metadata": metadata, "audit": audit, "models": result["models"],
+    document = {"metadata": metadata, "audit": audit, "primary": result["primary"], "models": result["models"],
                 "leave_one_month_out": result["leave_one_month_out"]}
     (output / "results.json").write_text(json.dumps(document, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     charts = [] if args.no_charts else make_charts(result, output)
-    (output / "report.md").write_text(render_report(legacy, clean, duplicates, audit, result, metadata, charts, db_cleaned=db_clean), encoding="utf-8")
+    (output / "report.md").write_text(render_report(clean, audit, result, metadata, charts), encoding="utf-8")
     print(f"보고서: {output / 'report.md'}")
     print(f"정리 후 거래: SK {int((clean.aptNm == SK).sum())}건 / 센트럴 {int((clean.aptNm == IP).sum())}건")
-    print(json.dumps(result["models"][3], ensure_ascii=False, indent=2))
+    print(json.dumps(result["primary"], ensure_ascii=False, indent=2))
     return 0
 
 
