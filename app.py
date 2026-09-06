@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone, timedelta
 import yaml
 import numpy as np
 import pandas as pd
@@ -227,6 +228,23 @@ def get_distinct_color_map(active_complexes: list, all_complexes: list, registry
     return registry
 
 
+def compute_daily_moving_average(df: pd.DataFrame) -> pd.DataFrame:
+    """거래일별 평균의 달력 기준 최근 7일 평균: 당일 포함, 7일 전 제외."""
+    daily = (df.dropna(subset=["dealDate", "dealAmount"])
+             .groupby("dealDate")["dealAmount"].mean().sort_index())
+    result = daily.to_frame()
+    result["MA7"] = daily.rolling("7D", min_periods=1).mean()
+    return result.reset_index()
+
+
+def compute_monthly_prices(df: pd.DataFrame) -> pd.DataFrame:
+    """선택된 거래의 월별 중위가격과 표본 수. 거래 없는 월은 생성하지 않음."""
+    valid = df.dropna(subset=["dealDate", "dealAmount"]).copy()
+    valid["계약월"] = valid["dealDate"].dt.strftime("%Y-%m")
+    return (valid.groupby("계약월")["dealAmount"]
+            .agg(중위가격="median", 거래건수="count").reset_index())
+
+
 def compute_all_time_highs(df: pd.DataFrame) -> pd.DataFrame:
     """
     단지별 (+면적타입별) 전체 층수 시계열 데이터를 기준으로 '단지 신고가 갱신(is_ath)' 여부를 사전 판별합니다.
@@ -345,7 +363,7 @@ def main():
 
     # 2. 연식 기준 필터 (슬라이더, default 5년)
     st.sidebar.markdown("##### 🏗️ 연식 기준 (준공연차 필터)")
-    current_year = 2026 # 한국시간 기준 현재연도
+    current_year = datetime.now(timezone(timedelta(hours=9))).year
     max_age = st.sidebar.slider("연식 기준 (최근 N년 이내 준공)", min_value=0, max_value=30, value=5, step=1)
     st.sidebar.caption(f"ℹ️ {current_year - max_age}년 이후 준공된 아파트 ({max_age}년 이내)")
 
@@ -551,7 +569,7 @@ def main():
         st.subheader("📈 시계열 실거래가 추이 및 단지별 가격 모멘텀 심층 분석")
 
         # 1. 단지별 가격 변동률 & 모멘텀 요약 카드
-        st.markdown("##### 🎯 주요 단지별 가격 변동률 및 시세 모멘텀")
+        st.markdown("##### 🎯 주요 단지별 월별 중위가격 비교")
         momentum_cols = st.columns(min(4, max(1, len(filtered_df["aptNm"].unique()))))
         
         for i, apt in enumerate(filtered_df["aptNm"].unique()):
@@ -559,9 +577,12 @@ def main():
             apt_data = filtered_df[filtered_df["aptNm"] == apt].sort_values("dealDate")
             
             if not apt_data.empty:
-                first_deal = apt_data.iloc[0]["dealAmount"]
-                last_deal = apt_data.iloc[-1]["dealAmount"]
-                change_rate = ((last_deal - first_deal) / first_deal * 100) if first_deal > 0 else 0
+                monthly = compute_monthly_prices(apt_data)
+                first_month = monthly.iloc[0]
+                last_month = monthly.iloc[-1]
+                comparable = len(monthly) >= 2 and first_month["중위가격"] > 0
+                change_rate = ((last_month["중위가격"] / first_month["중위가격"] - 1) * 100) if comparable else 0
+                change_text = f"{change_rate:+.1f}%" if comparable else "비교 불가 (1개월)"
                 max_d = apt_data["dealAmount"].max()
                 min_d = apt_data["dealAmount"].min()
                 total_cnt = len(apt_data)
@@ -570,33 +591,46 @@ def main():
                 ath_cnt = int(apt_data["is_ath"].sum()) if "is_ath" in apt_data.columns else 0
                 
                 color_badge = "#ef4444" if change_rate > 0 else "#0ea5e9" if change_rate < 0 else "#64748b"
-                sign_str = "+" if change_rate > 0 else ""
-                
+
                 with col_target:
                     st.markdown(
                         f"""
                         <div class="metric-card" style="border-top: 4px solid {complex_color_map.get(apt, '#3b82f6')};">
                             <div class="metric-title" style="font-weight:bold; font-size:14px; color:var(--text-color);">{apt}</div>
                             <div style="font-size:20px; font-weight:bold; color:{color_badge}; margin: 4px 0;">
-                                {sign_str}{change_rate:.1f}% 
-                                <span style="font-size:12px; color:var(--text-color); font-weight:normal;">(기간 변동률)</span>
+                                {change_text}
+                                <span style="font-size:12px; color:var(--text-color); font-weight:normal;">(첫·마지막 관측월 중위가격 비교)</span>
                             </div>
                             <div class="metric-sub">
-                                • 최근 거래: <b>{format_korean_currency(last_deal)}</b><br>
+                                • {first_month['계약월']}: <b>{format_korean_currency(first_month['중위가격'])}</b> ({int(first_month['거래건수'])}건)<br>
+                                • {last_month['계약월']}: <b>{format_korean_currency(last_month['중위가격'])}</b> ({int(last_month['거래건수'])}건)<br>
                                 • 변동폭: {format_korean_currency(min_d)} ~ {format_korean_currency(max_d)}<br>
-                                • 총 {total_cnt}건 (🌟 신고가 갱신 {ath_cnt}회)
+                                • 총 {total_cnt}건 (🌟 수집 기간 내 신고가 갱신 {ath_cnt}회)
                             </div>
                         </div>
                         """,
                         unsafe_allow_html=True,
                     )
 
+        st.caption("변동률은 선택 기간의 첫·마지막 거래 관측월 중위가격을 비교합니다. "
+                   "기간 경계의 월은 일부 날짜만 포함될 수 있고, 층수·면적·거래 구성 차이는 보정하지 않습니다.")
+        monthly_table = filtered_df.groupby("aptNm").apply(
+            compute_monthly_prices, include_groups=False
+        ).reset_index(level=0).reset_index(drop=True)
+        st.dataframe(monthly_table.rename(columns={"aptNm": "단지명", "중위가격": "중위가격(만원)"}),
+                     use_container_width=True, hide_index=True)
+        history_dates = df["dealDate"].dropna()
+        if not history_dates.empty:
+            st.caption(f"신고가 비교 범위: 저장된 계약일 {history_dates.min():%Y-%m-%d} ~ {history_dates.max():%Y-%m-%d}. "
+                       "단지·면적타입별로 전체 층수의 취소되지 않은 거래를 비교하며, 첫 관측 거래도 포함합니다. "
+                       "화면의 기간·층수 필터 이전 데이터를 사용하며 과거 전체 이력의 최고가를 뜻하지 않습니다.")
+
         # 2. 차트 컨트롤 옵션 바
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            show_ma = st.checkbox("단지별 7일 이동평균 추세선", value=True)
+            show_ma = st.checkbox("단지별 7일 이동평균 추세선", value=True, help="당일을 포함한 최근 7일 내 거래일별 평균가격의 평균입니다. 거래 없는 날은 제외하고, 각 거래일에 동일한 가중치를 줍니다. 현재 선택 기간 안의 거래만 사용합니다.")
         with c2:
-            show_ath = st.checkbox("🌟 신고가 갱신 거래 하이라이트", value=True)
+            show_ath = st.checkbox("🌟 수집 기간 내 신고가 갱신 거래 하이라이트", value=True)
         with c3:
             show_volume = st.checkbox("📊 거래량(건수) 서브플롯 결합", value=True)
         with c4:
@@ -659,12 +693,12 @@ def main():
             else:
                 fig_trend.add_trace(trace_scatter)
 
-            # 🌟 신고가 갱신 거래 마커 (단지 고유 색상 적용하여 구분 명확화)
+            # 🌟 수집 기간 내 신고가 갱신 거래 마커 (단지 고유 색상 적용하여 구분 명확화)
             if show_ath:
                 ath_df = apt_df[apt_df["is_ath"]]
                 if not ath_df.empty:
                     hover_text_ath = [
-                        f"🌟 <b>{row['aptNm']} [단지 신고가 갱신!]</b><br>"
+                        f"🌟 <b>{row['aptNm']} [수집 기간 내 신고가 갱신]</b><br>"
                         f"거래일: {row['dealDate'].strftime('%Y-%m-%d') if pd.notna(row['dealDate']) else ''}<br>"
                         f"신고가 금액: <b style='color:{color};'>{format_korean_currency(row['dealAmount'])}</b><br>"
                         f"평당가: {int(round(row.get('pyeongPrice', 0))):,}만원/평<br>"
@@ -675,7 +709,7 @@ def main():
                         x=ath_df["dealDate"],
                         y=ath_df["dealAmount"],
                         mode="markers",
-                        name=f"{apt} (신고가)",
+                        name=f"{apt} (수집 기간 내 신고가)",
                         legendgroup=apt,
                         showlegend=False,
                         marker=dict(
@@ -694,8 +728,7 @@ def main():
 
             # 2. 단지별 7일 이동평균 추세선 (범례 겹침 방지: showlegend=False)
             if show_ma and len(apt_df) >= 2:
-                apt_daily = apt_df.groupby("dealDate")["dealAmount"].mean().reset_index().sort_values("dealDate")
-                apt_daily["MA7"] = apt_daily["dealAmount"].rolling(window=7, min_periods=1).mean()
+                apt_daily = compute_daily_moving_average(apt_df)
 
                 trace_ma = go.Scatter(
                     x=apt_daily["dealDate"],
@@ -896,21 +929,9 @@ def main():
         st.markdown("#### 1️⃣ 층수(Floor)와 실거래가 상관관계 및 통계 분석")
         
         valid_floor_df = filtered_df.dropna(subset=["floor", "dealAmount"]).copy()
-        if len(valid_floor_df) >= 3:
-            slope, intercept, r_value, p_value, std_err = stats.linregress(
-                valid_floor_df["floor"], valid_floor_df["dealAmount"]
-            )
-            r_squared = r_value ** 2
-            
-            strength = "강한 양의 상관관계" if r_value > 0.4 else "보통 수준의 상관관계" if r_value > 0.15 else "미미한 상관관계"
-            st.markdown(
-                f"""<div class="insight-box">
-                💡 <b>층수 가격 영향력 통계 분석 결과:</b><br>
-                • 층수가 <b>1층 높아질 때마다 평균 약 +{int(round(slope)):,}만원</b>의 프리미엄이 형성됩니다. (전체 기준)<br>
-                • 상관계수(r): <b>{r_value:.3f}</b> ({strength}, 결정계수 R² = {r_squared:.3f})
-                </div>""",
-                unsafe_allow_html=True,
-            )
+        st.caption("단지별 층수와 가격의 관측된 상관관계를 비교합니다. "
+                   "면적·계약 시점·동·향 등을 보정하지 않은 결과로, 층수가 가격을 올리는 인과 효과를 뜻하지 않습니다. "
+                   "사이드바에서 면적과 기간을 좁혀 유사 조건끼리 비교하세요.")
 
         col_f1, col_f2 = st.columns(2)
         with col_f1:
@@ -959,7 +980,7 @@ def main():
             st.plotly_chart(fig_floor_group, use_container_width=True)
 
         # 단지별 층수 회귀 상세 분석 테이블
-        st.markdown("##### 📋 단지별 층당 가격 상승액 & 상관관계 세부 통계")
+        st.markdown("##### 📋 단지별 층수·가격 상관관계와 표본 수")
         apt_floor_stats = []
         for apt in filtered_df["aptNm"].unique():
             sub = filtered_df[filtered_df["aptNm"] == apt].dropna(subset=["floor", "dealAmount"])
@@ -968,13 +989,16 @@ def main():
                 apt_floor_stats.append({
                     "단지명": apt,
                     "거래건수": len(sub),
-                    "층당 가격 변동액": f"{int(round(sl)):+,} 만원/층",
+                    "회귀 기울기(관측값)": f"{int(round(sl)):+,} 만원/층",
                     "상관계수 (r)": f"{r:.3f}",
+                    "결정계수 (R²)": f"{r ** 2:.3f}",
                     "저층(1~5층) 평균": format_korean_currency(sub[sub["floor"] <= 5]["dealAmount"].mean()),
                     "고층(16층+) 평균": format_korean_currency(sub[sub["floor"] >= 16]["dealAmount"].mean()),
                 })
         if apt_floor_stats:
             st.dataframe(pd.DataFrame(apt_floor_stats), use_container_width=True, hide_index=True)
+        else:
+            st.info("단지별 회귀 분석에는 가격·층수가 있는 거래 3건 이상과 서로 다른 층수가 필요합니다.")
 
         st.markdown("---")
 
