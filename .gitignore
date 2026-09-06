@@ -152,6 +152,8 @@ activemq-data/
 .env.*
 !.env.example
 .envrc
+.DS_Store
+*.DS_Store
 .venv
 env/
 venv/
