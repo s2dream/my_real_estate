@@ -275,9 +275,24 @@ def compute_all_time_highs(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-@st.cache_data
+def parse_setting_date(date_val, default="2026-01-01"):
+    """setting.yml의 날짜 문자열(YYYY-MM-DD, YYYYMM 등)을 datetime.date 객체로 변환"""
+    if not date_val:
+        return pd.to_datetime(default).date()
+    s = str(date_val).strip()
+    if len(s) == 6 and s.isdigit():
+        s = f"{s[:4]}-{s[4:6]}-01"
+    elif len(s) == 8 and s.isdigit():
+        s = f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    try:
+        return pd.to_datetime(s).date()
+    except Exception:
+        return pd.to_datetime(default).date()
+
+
+@st.cache_data(ttl=10)
 def load_setting():
-    """setting.yml 로드"""
+    """setting.yml 로드 (설정 변경 시 10초 내 자동 갱신)"""
     if os.path.exists("setting.yml"):
         with open("setting.yml", "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
@@ -425,17 +440,37 @@ def main():
             (floor_numeric >= floor_range[0]) & (floor_numeric <= floor_range[1])
         ]
 
-    # 6. 기간 필터
+    # 6. 기간 필터 (setting.yml의 dashboard.start_date 제약 반영)
+    dashboard_cfg = setting.get("dashboard", {}) if setting else {}
+    cfg_start_str = str(dashboard_cfg.get("start_date", "2026-01-01")).strip()
+    setting_min_date = parse_setting_date(cfg_start_str, default="2026-01-01")
+
     if "dealDate" in filtered_df.columns and not filtered_df["dealDate"].dropna().empty:
-        min_date = filtered_df["dealDate"].min().date()
-        max_date = filtered_df["dealDate"].max().date()
-        if min_date != max_date:
-            date_range = st.sidebar.date_input("거래 계약 기간", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+        db_min_date = filtered_df["dealDate"].min().date()
+        db_max_date = filtered_df["dealDate"].max().date()
+
+        # 설정된 시작일과 DB 최소일 중 더 늦은 날짜를 통계 시작 기준으로 제약
+        effective_start_date = max(db_min_date, setting_min_date) if setting_min_date else db_min_date
+
+        if effective_start_date <= db_max_date:
+            date_range = st.sidebar.date_input(
+                "거래 계약 기간",
+                value=(effective_start_date, db_max_date),
+                min_value=effective_start_date,
+                max_value=db_max_date,
+                help=f"setting.yml 설정({cfg_start_str})에 따라 대시보드 통계 표시 시작일이 제약됩니다.",
+            )
             if isinstance(date_range, tuple) and len(date_range) == 2:
                 start_d, end_d = date_range
                 filtered_df = filtered_df[
                     (filtered_df["dealDate"].dt.date >= start_d) & (filtered_df["dealDate"].dt.date <= end_d)
                 ]
+            else:
+                filtered_df = filtered_df[filtered_df["dealDate"].dt.date >= effective_start_date]
+        else:
+            filtered_df = filtered_df[filtered_df["dealDate"].dt.date >= effective_start_date]
+
+        st.sidebar.caption(f"ℹ️ 통계 기준일: {effective_start_date} 이후 (setting.yml)")
 
     # 7. 거래 취소/해제 건 필터
     include_canceled = st.sidebar.checkbox("거래 취소/해제 건 포함", value=False, help="계약 후 해제/취소된 거래를 포함하여 조회합니다.")

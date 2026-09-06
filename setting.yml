@@ -53,3 +53,9 @@ storage:
   # 수집된 SQLite 데이터베이스 파일 경로 및 테이블명
   db_path: "data/transactions.db"
   table_name: "transactions"
+
+dashboard:
+  # 대시보드(app.py) 통계 및 차트 표시 시작 기준일 (YYYY-MM-DD 또는 YYYYMM 형식)
+  # - "2026-01-01" 로 설정 시 2026년 1월 이후 거래 데이터만 대시보드 통계와 시각화에 제약되어 표시됩니다.
+  # - DB에 과거 데이터(2020년~)가 있더라도 대시보드는 이 설정일을 기준으로 제약됩니다.
+  start_date: "2026-01-01"
