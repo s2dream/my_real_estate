@@ -1,0 +1,475 @@
+{
+  "metadata": {
+    "start_date": "2024-01-01",
+    "as_of": "2026-09-06",
+    "lag_days": 30,
+    "source": "csv",
+    "csv_dir": "/Users/jeonghoon/github/my_real_estate/data/csv",
+    "csv_audit": {
+      "source": "MOLIT CSV snapshots",
+      "files": [
+        {
+          "file": "아파트(매매)_실거래가_20260906192322.csv",
+          "sha256": "d4259ef4274616e2601b80db458e1c12dbbae4a96da1c260655a97c7cb4c66ae",
+          "bytes": 213718,
+          "coverage_start": "2023-01-01",
+          "coverage_end": "2023-12-31",
+          "coverage_basis": "declared_search_period",
+          "raw_rows": 1103,
+          "status": "read",
+          "raw_target_rows": 11
+        },
+        {
+          "file": "아파트(매매)_실거래가_20260906192244.csv",
+          "sha256": "62f0d0eefcd6964276e2e6179ea235c0bfc709453450fcd2469f7b6ed5230ea4",
+          "bytes": 382239,
+          "coverage_start": "2020-01-01",
+          "coverage_end": "2020-12-31",
+          "coverage_basis": "declared_search_period",
+          "raw_rows": 2338,
+          "status": "read",
+          "raw_target_rows": 0
+        },
+        {
+          "file": "아파트(매매)_실거래가_20260906192305.csv",
+          "sha256": "9fb4c252feb87b661b98bf5b930afa24c67df01d3bab53d53df61cb2416b987a",
+          "bytes": 226268,
+          "coverage_start": "2021-01-01",
+          "coverage_end": "2021-12-31",
+          "coverage_basis": "declared_search_period",
+          "raw_rows": 1383,
+          "status": "read",
+          "raw_target_rows": 0
+        },
+        {
+          "file": "아파트(매매)_실거래가_20260906192315.csv",
+          "sha256": "1bc553325c3c2a77cfa6693e65f4eef1e81664a10b03fa5e879332973e447474",
+          "bytes": 107048,
+          "coverage_start": "2022-01-01",
+          "coverage_end": "2022-12-31",
+          "coverage_basis": "declared_search_period",
+          "raw_rows": 589,
+          "status": "read",
+          "raw_target_rows": 1
+        },
+        {
+          "file": "아파트(매매)_실거래가_20260906192327.csv",
+          "sha256": "a316a684635eb2cc4ddd9986a0a0dfc5a9bb77533db71d279d94f9e640101229",
+          "bytes": 309767,
+          "coverage_start": "2024-01-01",
+          "coverage_end": "2024-12-31",
+          "coverage_basis": "declared_search_period",
+          "raw_rows": 1520,
+          "status": "read",
+          "raw_target_rows": 41
+        },
+        {
+          "file": "아파트(매매)_실거래가_20260906192334.csv",
+          "sha256": "ab64bd1930ce6f079edfe77efa7498e878fc20702c3d5e3ffbe53f454c758783",
+          "bytes": 417197,
+          "coverage_start": "2025-01-01",
+          "coverage_end": "2025-12-31",
+          "coverage_basis": "declared_search_period",
+          "raw_rows": 2030,
+          "status": "read",
+          "raw_target_rows": 80
+        },
+        {
+          "file": "아파트(매매)_실거래가_20260906192340.csv",
+          "sha256": "7f6b59cf4ffa8479904b60fae1e225371c6b06691d683a3d1992fba223df671d",
+          "bytes": 403476,
+          "coverage_start": "2026-01-01",
+          "coverage_end": "2026-12-31",
+          "coverage_basis": "declared_search_period",
+          "raw_rows": 1984,
+          "status": "read",
+          "raw_target_rows": 113
+        }
+      ],
+      "raw_target_rows": 246,
+      "invalid_date_rows": 0,
+      "outside_date_rows": 12,
+      "invalid_price_rows": 0,
+      "invalid_area_rows": 0,
+      "invalid_floor_rows": 0,
+      "identical_files_skipped": 0,
+      "snapshot_policy": "동일 SHA-256 파일은 한 번만 사용; 서로 다른 파일의 기간 중첩은 오류 처리",
+      "cancellation_policy": "같은 원본 스냅샷의 해제 행을 먼저 제외한 뒤 유효 행의 자연키 중복 제거",
+      "date_policy": "기준일은 계약일의 상한이며 당시 공개 상태를 복원하는 기준일이 아님",
+      "source_row_policy": "CSV 헤더 이후 첫 데이터 행을 1로 세는 행 번호; NO는 source_no에 별도 보존",
+      "date_selected_rows": 234,
+      "cancelled_rows": 10,
+      "source_key_conflicts": 8,
+      "active_duplicate_groups": 0,
+      "active_duplicate_rows_removed": 0,
+      "clean_rows": 224,
+      "active_rows_by_complex": {
+        "매교역푸르지오SKVIEW": 171,
+        "수원센트럴아이파크자이": 53
+      },
+      "cancelled_rows_by_complex": {
+        "매교역푸르지오SKVIEW": 9,
+        "수원센트럴아이파크자이": 1
+      },
+      "conflict_rows": 18
+    },
+    "primary_cutoff": "2026-07-31",
+    "database": "/Users/jeonghoon/github/my_real_estate/data/transactions.db",
+    "database_sha256": "2f38f38db20800e492220ff1bf242a3e79ad9f6aae3e241bc7c772c60880ac1f",
+    "query_rows_sha256": "2e332c8e6119eca83151b98b3f4eca450971f87255638fd22086b5c37afaea51",
+    "python": "3.12.8",
+    "executable": "/Users/jeonghoon/opt/anaconda3/envs/py312/bin/python",
+    "versions": {
+      "pandas": "2.2.3",
+      "numpy": "1.26.4",
+      "statsmodels": "0.15.0"
+    }
+  },
+  "audit": {
+    "input_rows": 351,
+    "invalid_date_rows": 0,
+    "outside_date_rows": 12,
+    "date_selected_rows": 339,
+    "outside_or_invalid_area_rows": 0,
+    "invalid_price_rows": 0,
+    "invalid_floor_rows": 0,
+    "duplicate_groups": 113,
+    "duplicate_rows_removed": 113,
+    "cancelled_keys_removed": 8,
+    "trade_type_conflict_keys": 0,
+    "clean_rows": 218,
+    "csv_not_in_db_keys": 6,
+    "db_not_in_csv_keys": 0
+  },
+  "models": [
+    {
+      "label": "기존 방식 재현: 중복 포함·선형 시간/층",
+      "formula": "price ~ is_sk + floor + days",
+      "covariance": "nonrobust",
+      "n": 331,
+      "sk_n": 243,
+      "ip_n": 88,
+      "months": 28,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9635898338798803,
+      "r_squared": 0.4573406099410654,
+      "parameters": 4,
+      "ci_low": 0.8340805978075772,
+      "ci_high": 1.0930990699521834,
+      "p_value": 1.155957883569921e-37
+    },
+    {
+      "label": "DB 중복 정리 후 기존 식",
+      "formula": "price ~ is_sk + floor + days",
+      "covariance": "HC3",
+      "n": 218,
+      "sk_n": 166,
+      "ip_n": 52,
+      "months": 28,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9207023842216753,
+      "r_squared": 0.4465327296822613,
+      "parameters": 4,
+      "ci_low": 0.7589297476482763,
+      "ci_high": 1.0824750207950742,
+      "p_value": 2.852493633488136e-23
+    },
+    {
+      "label": "공통월·월/층구간 가산 보정",
+      "formula": "price ~ is_sk + C(month) + C(floor_tier)",
+      "covariance": "cluster",
+      "n": 166,
+      "sk_n": 120,
+      "ip_n": 46,
+      "months": 16,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.8934541204081019,
+      "r_squared": 0.6040535171959917,
+      "parameters": 19,
+      "ci_low": 0.6900172407425278,
+      "ci_high": 1.096891000073676,
+      "p_value": 1.1828575681665056e-07
+    },
+    {
+      "label": "주 분석: 공통 월×층구간",
+      "formula": "price ~ is_sk + C(cell)",
+      "covariance": "cluster",
+      "n": 136,
+      "sk_n": 93,
+      "ip_n": 43,
+      "months": 15,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9203609681326019,
+      "r_squared": 0.6444524245951901,
+      "parameters": 25,
+      "ci_low": 0.7200978111637973,
+      "ci_high": 1.1206241251014064,
+      "p_value": 1.1163696052421519e-07
+    },
+    {
+      "label": "주 분석의 HC3 구간",
+      "formula": "price ~ is_sk + C(cell)",
+      "covariance": "HC3",
+      "n": 136,
+      "sk_n": 93,
+      "ip_n": 43,
+      "months": 15,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9203609681326019,
+      "r_squared": 0.6444524245951901,
+      "parameters": 25,
+      "ci_low": 0.7346528950163698,
+      "ci_high": 1.106069041248834,
+      "p_value": 9.285375880487121e-17
+    },
+    {
+      "label": "최근 잠정월 포함",
+      "formula": "price ~ is_sk + C(cell)",
+      "covariance": "cluster",
+      "n": 143,
+      "sk_n": 96,
+      "ip_n": 47,
+      "months": 16,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9726516635793412,
+      "r_squared": 0.6709743448802759,
+      "parameters": 27,
+      "ci_low": 0.7454246097409456,
+      "ci_high": 1.1998787174177368,
+      "p_value": 1.6465660928484593e-07
+    },
+    {
+      "label": "직거래 제외",
+      "formula": "price ~ is_sk + C(cell)",
+      "covariance": "cluster",
+      "n": 130,
+      "sk_n": 88,
+      "ip_n": 42,
+      "months": 14,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9244939243572634,
+      "r_squared": 0.7526866990567875,
+      "parameters": 24,
+      "ci_low": 0.7294661887463667,
+      "ci_high": 1.11952165996816,
+      "p_value": 1.3641691981664902e-07
+    },
+    {
+      "label": "중개거래만",
+      "formula": "price ~ is_sk + C(cell)",
+      "covariance": "cluster",
+      "n": 130,
+      "sk_n": 88,
+      "ip_n": 42,
+      "months": 14,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9244939243572634,
+      "r_squared": 0.7526866990567875,
+      "parameters": 24,
+      "ci_low": 0.7294661887463667,
+      "ci_high": 1.11952165996816,
+      "p_value": 1.3641691981664902e-07
+    },
+    {
+      "label": "월별 각 3건 이상",
+      "formula": "price ~ is_sk + C(cell)",
+      "covariance": "cluster",
+      "n": 113,
+      "sk_n": 77,
+      "ip_n": 36,
+      "months": 9,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9217103027321937,
+      "r_squared": 0.6176867149916195,
+      "parameters": 19,
+      "ci_low": 0.6757330202067056,
+      "ci_high": 1.1676875852576818,
+      "p_value": 2.497292529707659e-05
+    },
+    {
+      "label": "월별 각 5건 이상",
+      "formula": "price ~ is_sk + C(cell)",
+      "covariance": "cluster",
+      "n": 38,
+      "sk_n": 23,
+      "ip_n": 15,
+      "months": 2,
+      "unit": "억원",
+      "status": "점추정만: 월 군집 6개 미만",
+      "estimate": 0.9300471451021468,
+      "r_squared": 0.7190141484250108,
+      "parameters": 7
+    },
+    {
+      "label": "단지별 양끝 1% 제외",
+      "formula": "price ~ is_sk + C(cell)",
+      "covariance": "cluster",
+      "n": 129,
+      "sk_n": 88,
+      "ip_n": 41,
+      "months": 14,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.8707251594528406,
+      "r_squared": 0.7870844493019443,
+      "parameters": 24,
+      "ci_low": 0.7234253255295577,
+      "ci_high": 1.0180249933761234,
+      "p_value": 9.872722659731853e-09
+    },
+    {
+      "label": "월 보정·층수 이차식",
+      "formula": "price ~ is_sk + C(month) + floor + I(floor ** 2)",
+      "covariance": "cluster",
+      "n": 166,
+      "sk_n": 120,
+      "ip_n": 46,
+      "months": 16,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.8818397761505249,
+      "r_squared": 0.6079887222463529,
+      "parameters": 19,
+      "ci_low": 0.6826689192491914,
+      "ci_high": 1.0810106330518585,
+      "p_value": 1.064966372350145e-07
+    },
+    {
+      "label": "월 보정·개별 층 범주",
+      "formula": "price ~ is_sk + C(month) + C(floor)",
+      "covariance": "cluster",
+      "n": 166,
+      "sk_n": 120,
+      "ip_n": 46,
+      "months": 16,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9400903119690375,
+      "r_squared": 0.6520475651172213,
+      "parameters": 35,
+      "ci_low": 0.7143311110291432,
+      "ci_high": 1.165849512908932,
+      "p_value": 2.3427640504437572e-07
+    },
+    {
+      "label": "로그가격: 같은 월×층구간",
+      "formula": "np.log(price) ~ is_sk + C(cell)",
+      "covariance": "cluster",
+      "n": 136,
+      "sk_n": 93,
+      "ip_n": 43,
+      "months": 15,
+      "unit": "%",
+      "status": "ok",
+      "estimate": 10.53352059086291,
+      "r_squared": 0.6098241443854597,
+      "parameters": 25,
+      "ci_low": 7.93372305808166,
+      "ci_high": 13.19593939732911,
+      "p_value": 3.27880467152245e-07
+    },
+    {
+      "label": "DB 정리본으로 주 분석 재계산",
+      "formula": "price ~ is_sk + C(cell)",
+      "covariance": "cluster",
+      "n": 133,
+      "sk_n": 91,
+      "ip_n": 42,
+      "months": 15,
+      "unit": "억원",
+      "status": "ok",
+      "estimate": 0.9269398998928309,
+      "r_squared": 0.6445118323098635,
+      "parameters": 25,
+      "ci_low": 0.7278063450263735,
+      "ci_high": 1.1260734547592883,
+      "p_value": 9.532114993329732e-08
+    }
+  ],
+  "leave_one_month_out": [
+    {
+      "omitted_month": "2025-03",
+      "estimate": 0.9162004486929282,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2025-04",
+      "estimate": 0.9308684961622895,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2025-05",
+      "estimate": 0.9278137655725567,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2025-06",
+      "estimate": 0.9541898781840448,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2025-07",
+      "estimate": 0.9019086031993638,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2025-08",
+      "estimate": 0.9304897717568452,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2025-10",
+      "estimate": 0.9157958940500706,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2025-11",
+      "estimate": 0.9501606865231873,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2025-12",
+      "estimate": 0.9295292369179344,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2026-02",
+      "estimate": 0.9463153692189724,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2026-03",
+      "estimate": 0.9069968417141336,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2026-04",
+      "estimate": 0.8660576624485536,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2026-05",
+      "estimate": 0.930223771251258,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2026-06",
+      "estimate": 0.8942645514866236,
+      "status": "ok"
+    },
+    {
+      "omitted_month": "2026-07",
+      "estimate": 0.9055350610480163,
+      "status": "ok"
+    }
+  ]
+}
