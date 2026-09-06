@@ -237,6 +237,14 @@ def clean_and_filter(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     if "dealDay" in df.columns:
         df["dealDay"] = df["dealDay"].str.zfill(2)
 
+    # 거래유형(dealType) 기본값: None/빈값/- 인 경우 '중개거래'로 지정
+    if "dealType" in df.columns:
+        df["dealType"] = df["dealType"].astype(str).str.strip()
+        invalid_deal_type = df["dealType"].isna() | df["dealType"].isin(["None", "nan", "", "-", "NoneType"])
+        df["dealType"] = df["dealType"].mask(invalid_deal_type, "중개거래")
+    else:
+        df["dealType"] = "중개거래"
+
     if "dealAmount" in df.columns:
         df["dealAmount"] = (
             df["dealAmount"]

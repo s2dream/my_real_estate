@@ -137,6 +137,18 @@ class RealEstateDB:
         if "dealDate" in save_df.columns and pd.api.types.is_datetime64_any_dtype(save_df["dealDate"]):
             save_df["dealDate"] = save_df["dealDate"].dt.strftime("%Y-%m-%d")
 
+        # 거래유형(dealType) 기본값 처리: None, '', '-', 'nan'인 경우 '중개거래'로 지정
+        if "dealType" in save_df.columns:
+            save_df["dealType"] = save_df["dealType"].astype(str).str.strip()
+            invalid_deal_type = save_df["dealType"].isna() | save_df["dealType"].isin(["None", "nan", "", "-", "NoneType"])
+            save_df["dealType"] = save_df["dealType"].mask(invalid_deal_type, "중개거래")
+
+        # dealMonth, dealDay 패딩(2자리) 표준화 (중복 방지)
+        if "dealMonth" in save_df.columns:
+            save_df["dealMonth"] = save_df["dealMonth"].astype(str).str.strip().str.zfill(2)
+        if "dealDay" in save_df.columns:
+            save_df["dealDay"] = save_df["dealDay"].astype(str).str.strip().str.zfill(2)
+
         # NaN 값을 None(NULL)으로 변환
         records = save_df[columns].to_dict(orient="records")
 

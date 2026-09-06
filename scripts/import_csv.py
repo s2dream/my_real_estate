@@ -201,7 +201,12 @@ def parse_and_transform(df: pd.DataFrame, only_84: bool = False, target_regions:
     result["buildYear"] = df[col_map["buildYear"]].astype(str).str.strip() if "buildYear" in col_map else ""
 
     # 9. 거래유형
-    result["dealType"] = df[col_map["dealType"]].astype(str).str.strip() if "dealType" in col_map else "중개거래"
+    if "dealType" in col_map:
+        dtype_series = df[col_map["dealType"]].astype(str).str.strip()
+        invalid_type = dtype_series.isna() | dtype_series.isin(["None", "nan", "", "-", "NoneType"])
+        result["dealType"] = dtype_series.mask(invalid_type, "중개거래")
+    else:
+        result["dealType"] = "중개거래"
 
     # 10. 해제/취소건 처리
     if "cdealDay" in col_map:
