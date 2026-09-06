@@ -232,6 +232,11 @@ def clean_and_filter(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
 
+    if "dealMonth" in df.columns:
+        df["dealMonth"] = df["dealMonth"].str.zfill(2)
+    if "dealDay" in df.columns:
+        df["dealDay"] = df["dealDay"].str.zfill(2)
+
     if "dealAmount" in df.columns:
         df["dealAmount"] = (
             df["dealAmount"]
