@@ -350,7 +350,26 @@ def load_data():
         return None
 
 
+# 조건에 따라 위젯이 잠시 사라져도 사용자의 선택을 유지한다.
+DASHBOARD_WIDGET_KEYS = (
+    "filter_regions", "filter_age", "filter_complexes", "filter_types",
+    "filter_floor", "filter_dates", "filter_canceled", "show_ma", "show_ath",
+    "show_volume", "show_mean_line", "analysis_view", "tab5_apt_multiselect",
+    "tab5_keyword_search",
+)
+
+
+def retain_multiselect(key, options, defaults):
+    """최초에만 기본값을 적용하고 이후에는 유효한 기존 선택을 유지한다."""
+    previous = st.session_state.get(key, defaults)
+    st.session_state[key] = [value for value in previous if value in options]
+
+
 def main():
+    # 자기 대입으로 위젯 상태를 분리해, 미렌더링 위젯의 자동 정리를 막는다.
+    for key in DASHBOARD_WIDGET_KEYS:
+        if key in st.session_state:
+            st.session_state[key] = st.session_state[key]
     setting = load_setting()
     df = load_data()
 
@@ -373,13 +392,14 @@ def main():
     st.sidebar.header("🔍 필터 및 분석 옵션")
 
     # 1. 지역 필터
-    selected_regions = st.sidebar.multiselect("지역 선택", options=db_regions, default=db_regions)
+    retain_multiselect("filter_regions", db_regions, db_regions)
+    selected_regions = st.sidebar.multiselect("지역 선택", options=db_regions, key="filter_regions")
     filtered_df = df[df["regionName"].isin(selected_regions)]
 
     # 2. 연식 기준 필터 (슬라이더, default 5년)
     st.sidebar.markdown("##### 🏗️ 연식 기준 (준공연차 필터)")
     current_year = datetime.now(timezone(timedelta(hours=9))).year
-    max_age = st.sidebar.slider("연식 기준 (최근 N년 이내 준공)", min_value=0, max_value=30, value=5, step=1)
+    max_age = st.sidebar.slider("연식 기준 (최근 N년 이내 준공)", min_value=0, max_value=30, value=5, step=1, key="filter_age")
     st.sidebar.caption(f"ℹ️ {current_year - max_age}년 이후 준공된 아파트 ({max_age}년 이내)")
 
     if "buildYear" in filtered_df.columns:
@@ -392,10 +412,11 @@ def main():
     target_defaults = ["매교역푸르지오SKVIEW", "수원센트럴아이파크자이"]
     default_selected_complexes = [apt for apt in target_defaults if apt in available_complexes]
 
+    retain_multiselect("filter_complexes", available_complexes, default_selected_complexes)
     selected_complexes = st.sidebar.multiselect(
         "아파트 단지명",
         options=available_complexes,
-        default=default_selected_complexes,
+        key="filter_complexes",
         help="선택한 단지만 선별하여 조회합니다. 모두 선택을 해제(비움)하면 해당 연식의 전체 단지를 표시합니다.",
     )
     if selected_complexes:
@@ -404,21 +425,28 @@ def main():
     # 4. 면적 타입 필터
     if "areaType" in filtered_df.columns and filtered_df["areaType"].notna().any():
         available_types = sorted(filtered_df["areaType"].dropna().unique().tolist())
-        selected_types = st.sidebar.multiselect("전용면적 타입", options=available_types, default=available_types)
+        retain_multiselect("filter_types", available_types, available_types)
+        selected_types = st.sidebar.multiselect("전용면적 타입", options=available_types, key="filter_types")
         if selected_types:
             filtered_df = filtered_df[filtered_df["areaType"].isin(selected_types)]
 
     # 5. 층수 필터 (기본 5층 이상)
     st.sidebar.markdown("##### 🪜 층수 기준 (Floor 필터)")
     floor_str = "전체 층수"
-    if "floor" in filtered_df.columns and filtered_df["floor"].notna().any():
+    if "floor" in df.columns and df["floor"].notna().any():
         floor_numeric_all = pd.to_numeric(df["floor"], errors="coerce").dropna()
         db_min_floor = int(max(1, floor_numeric_all.min())) if not floor_numeric_all.empty else 1
         db_max_floor = int(max(10, floor_numeric_all.max())) if not floor_numeric_all.empty else 30
-        default_min_floor = min(5, db_max_floor)
+        default_min_floor = max(db_min_floor, min(5, db_max_floor))
+        if "filter_floor" in st.session_state:
+            st.session_state.filter_floor = tuple(
+                max(db_min_floor, min(value, db_max_floor))
+                for value in st.session_state.filter_floor
+            )
 
         floor_range = st.sidebar.slider(
             "층수 범위 (층)",
+            key="filter_floor",
             min_value=db_min_floor,
             max_value=db_max_floor,
             value=(default_min_floor, db_max_floor),
@@ -440,21 +468,28 @@ def main():
             (floor_numeric >= floor_range[0]) & (floor_numeric <= floor_range[1])
         ]
 
-    # 6. 기간 필터 (setting.yml의 dashboard.start_date 제약 반영)
+    # 6. 전체 DB 기준의 기간 범위를 사용해 다른 필터가 날짜 선택을 초기화하지 않게 한다.
+    # setting.yml의 dashboard.start_date 제약은 그대로 적용한다.
     dashboard_cfg = setting.get("dashboard", {}) if setting else {}
     cfg_start_str = str(dashboard_cfg.get("start_date", "2026-01-01")).strip()
     setting_min_date = parse_setting_date(cfg_start_str, default="2026-01-01")
 
-    if "dealDate" in filtered_df.columns and not filtered_df["dealDate"].dropna().empty:
-        db_min_date = filtered_df["dealDate"].min().date()
-        db_max_date = filtered_df["dealDate"].max().date()
+    if "dealDate" in df.columns and not df["dealDate"].dropna().empty:
+        db_min_date = df["dealDate"].min().date()
+        db_max_date = df["dealDate"].max().date()
 
         # 설정된 시작일과 DB 최소일 중 더 늦은 날짜를 통계 시작 기준으로 제약
         effective_start_date = max(db_min_date, setting_min_date) if setting_min_date else db_min_date
 
         if effective_start_date <= db_max_date:
+            if "filter_dates" in st.session_state:
+                st.session_state.filter_dates = tuple(
+                    max(effective_start_date, min(value, db_max_date))
+                    for value in st.session_state.filter_dates
+                )
             date_range = st.sidebar.date_input(
                 "거래 계약 기간",
+                key="filter_dates",
                 value=(effective_start_date, db_max_date),
                 min_value=effective_start_date,
                 max_value=db_max_date,
@@ -473,7 +508,7 @@ def main():
         st.sidebar.caption(f"ℹ️ 통계 기준일: {effective_start_date} 이후 (setting.yml)")
 
     # 7. 거래 취소/해제 건 필터
-    include_canceled = st.sidebar.checkbox("거래 취소/해제 건 포함", value=False, help="계약 후 해제/취소된 거래를 포함하여 조회합니다.")
+    include_canceled = st.sidebar.checkbox("거래 취소/해제 건 포함", value=False, key="filter_canceled", help="계약 후 해제/취소된 거래를 포함하여 조회합니다.")
     if not include_canceled:
         filtered_df = filtered_df[~filtered_df["isCanceled"]]
 
@@ -663,13 +698,13 @@ def main():
         # 2. 차트 컨트롤 옵션 바
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            show_ma = st.checkbox("단지별 7일 이동평균 추세선", value=True, help="당일을 포함한 최근 7일 내 거래일별 평균가격의 평균입니다. 거래 없는 날은 제외하고, 각 거래일에 동일한 가중치를 줍니다. 현재 선택 기간 안의 거래만 사용합니다.")
+            show_ma = st.checkbox("단지별 7일 이동평균 추세선", key="show_ma", value=True, help="당일을 포함한 최근 7일 내 거래일별 평균가격의 평균입니다. 거래 없는 날은 제외하고, 각 거래일에 동일한 가중치를 줍니다. 현재 선택 기간 안의 거래만 사용합니다.")
         with c2:
-            show_ath = st.checkbox("🌟 수집 기간 내 신고가 갱신 거래 하이라이트", value=True)
+            show_ath = st.checkbox("🌟 수집 기간 내 신고가 갱신 거래 하이라이트", key="show_ath", value=True)
         with c3:
-            show_volume = st.checkbox("📊 거래량(건수) 서브플롯 결합", value=True)
+            show_volume = st.checkbox("📊 거래량(건수) 서브플롯 결합", key="show_volume", value=True)
         with c4:
-            show_mean_line = st.checkbox("전체 평균 가격 중심축 표시", value=True)
+            show_mean_line = st.checkbox("전체 평균 가격 중심축 표시", key="show_mean_line", value=True)
 
         # 3. Plotly 시계열 결합 차트 생성 (거래량 서브플롯 포함)
         if show_volume:
@@ -1088,6 +1123,7 @@ def main():
         view_mode = st.radio(
             "분석 기준 선택",
             ["🏢 아파트 단지별 보기", "🌐 지역(구)별 보기"],
+            key="analysis_view",
             index=0,
             horizontal=True,
         )
@@ -1215,11 +1251,11 @@ def main():
         # 현재 탭에서 선택 가능한 단지 목록
         tab5_available_apts = sorted(filtered_df["aptNm"].dropna().unique().tolist())
 
+        retain_multiselect("tab5_apt_multiselect", tab5_available_apts, [])
         with col_t1:
             tab5_selected_apts = st.multiselect(
                 "🏢 아파트 단지명 필터",
                 options=tab5_available_apts,
-                default=[],
                 placeholder="전체 단지 조회 중 (특정 단지를 선택해 집중 분석)",
                 key="tab5_apt_multiselect",
                 help="조회하고자 하는 단지를 선택하세요. 비워둘 경우 전체 단지를 조회합니다.",

@@ -77,6 +77,50 @@ namespace['main']()
         at.run()
         self.assertFalse(at.exception, f"app.py 실행 중 예외 발생: {at.exception}")
 
+    def test_floor_change_preserves_contract_period(self):
+        from datetime import date
+        at = self.make_app().run()
+        period = (date(2026, 1, 7), date(2026, 2, 8))
+        at.date_input[0].set_value(period).run()
+        next(s for s in at.slider if "층수 범위" in s.label).set_value((20, 20)).run()
+        self.assertFalse(at.exception)
+        self.assertEqual(at.date_input[0].value, period)
+        detail = next(d.value for d in at.dataframe if "계약일" in d.value.columns)
+        self.assertEqual(len(detail), 2)
+
+    def test_age_change_preserves_valid_complex_and_empty_selection(self):
+        row = dict(dealDate="2026-01-15", dealYear="2026", dealMonth="01",
+                   dealDay="15", sggCd="41115", regionName="수원시 팔달구",
+                   umdNm="매교동", jibun="2", aptNm="추가단지", floor=10,
+                   excluUseAr=84.9, areaType="84타입", dealAmount=70000,
+                   buildYear="2020", dealType="중개거래")
+        self.db.upsert_transactions(pd.DataFrame([row]))
+        at = self.make_app().run()
+        age = lambda: next(s for s in at.slider if "연식 기준" in s.label)
+        complexes = lambda: next(m for m in at.multiselect if m.label == "아파트 단지명")
+        age().set_value(10).run()
+        complexes().set_value(["추가단지"]).run()
+        age().set_value(5).run()
+        self.assertEqual(complexes().value, [])  # 제외된 선택을 기본 단지로 바꾸지 않는다.
+        age().set_value(10).run()
+        self.assertEqual(complexes().value, [])  # 명시적인 전체 단지 선택을 유지한다.
+        complexes().set_value(["매교역푸르지오SKVIEW", "추가단지"]).run()
+        age().set_value(5).run()
+        self.assertEqual(complexes().value, ["매교역푸르지오SKVIEW"])
+        self.assertFalse(at.exception)
+
+    def test_empty_results_preserve_analysis_options(self):
+        at = self.make_app().run()
+        next(c for c in at.checkbox if c.label == "단지별 7일 이동평균 추세선").uncheck().run()
+        at.text_input(key="tab5_keyword_search").set_value("매교동").run()
+        regions = lambda: next(m for m in at.multiselect if m.label == "지역 선택")
+        regions().set_value([]).run()
+        self.assertFalse(at.exception)
+        regions().set_value(["수원시 팔달구"]).run()
+        self.assertFalse(at.exception)
+        self.assertFalse(next(c for c in at.checkbox if c.label == "단지별 7일 이동평균 추세선").value)
+        self.assertEqual(at.text_input(key="tab5_keyword_search").value, "매교동")
+
     def test_app_filters_interaction(self):
         """사이드바 필터 및 멀티셀렉트 상호작용 검증"""
         at = self.make_app()
