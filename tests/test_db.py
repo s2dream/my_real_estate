@@ -217,6 +217,25 @@ class TestRealEstateDB(unittest.TestCase):
         with RealEstateDB(":memory:") as ctx_db:
             self.assertEqual(ctx_db.get_count(), 0)
 
+    def test_rich_identity_updates_corrected_price(self):
+        base = {"dealDate": "2026-01-01", "dealYear": "2026", "dealMonth": "01", "dealDay": "01",
+                "sggCd": "41115", "umdNm": "매교동", "jibun": "1", "aptNm": "단지",
+                "floor": 10, "excluUseAr": 84.9, "aptDong": "101", "rgstDate": "20260201"}
+        self.db.upsert_transactions(pd.DataFrame([{**base, "dealAmount": 90000}]))
+        self.db.upsert_transactions(pd.DataFrame([{**base, "dealAmount": 91000}]))
+        rows = self.db.get_all_transactions()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows.iloc[0].dealAmount, 91000)
+
+    def test_get_transactions_filters_in_sql(self):
+        rows = pd.DataFrame([
+            {"dealDate": "2025-12-31", "dealYear": "2025", "dealMonth": "12", "dealDay": "31", "sggCd": "1", "aptNm": "A", "dealAmount": 1},
+            {"dealDate": "2026-01-01", "dealYear": "2026", "dealMonth": "01", "dealDay": "01", "sggCd": "1", "aptNm": "B", "dealAmount": 2},
+        ])
+        self.db.upsert_transactions(rows)
+        result = self.db.get_transactions(start_date="2026-01-01")
+        self.assertEqual(result["aptNm"].tolist(), ["B"])
+
     def test_schema_migration(self):
         """cdealType, cdealDay 컬럼이 없는 구버전 테이블 마이그레이션 검증"""
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

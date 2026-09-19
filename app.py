@@ -301,14 +301,20 @@ def load_setting():
 
 @st.cache_data(ttl=60)
 def load_data():
-    """RealEstateDB 클래스를 통한 SQLite 데이터 로드 및 파생변수 생성"""
+    """대시보드 표시 기간만 SQL에서 조회하고 파생변수를 생성한다."""
     setting = load_setting()
     db_path = setting.get("storage", {}).get("db_path", "data/transactions.db")
     if not os.path.exists(db_path):
         return None
     try:
         db = RealEstateDB(db_path=db_path)
-        df = db.get_all_transactions()
+        start_date = parse_setting_date(setting.get("dashboard", {}).get("start_date", "2026-01-01"))
+        df = db.get_transactions(start_date=start_date)
+        # Streamlit AppTest mocks from older callers may only expose the legacy method.
+        if not isinstance(df, pd.DataFrame):
+            df = db.get_all_transactions()
+        else:
+            df.attrs["history_date_bounds"] = db.get_date_bounds()
         if df.empty:
             return df
 
@@ -342,7 +348,10 @@ def load_data():
             df["floorGroup"] = df["floor"].apply(categorize_floor)
 
         # 파생변수: 층수 필터와 무관한 단지 전체 기준 절대 신고가(is_ath) 계산
-        df = compute_all_time_highs(df)
+        if "is_ath" not in df.columns:
+            df = compute_all_time_highs(df)
+        else:
+            df["is_ath"] = df["is_ath"].astype(bool)
 
         return df
     except Exception as e:
@@ -399,7 +408,9 @@ def main():
     # 2. 연식 기준 필터 (슬라이더, default 5년)
     st.sidebar.markdown("##### 🏗️ 연식 기준 (준공연차 필터)")
     current_year = datetime.now(timezone(timedelta(hours=9))).year
-    max_age = st.sidebar.slider("연식 기준 (최근 N년 이내 준공)", min_value=0, max_value=30, value=5, step=1, key="filter_age")
+    if "filter_age" not in st.session_state:
+        st.session_state.filter_age = 5
+    max_age = st.sidebar.slider("연식 기준 (최근 N년 이내 준공)", min_value=0, max_value=30, step=1, key="filter_age")
     st.sidebar.caption(f"ℹ️ {current_year - max_age}년 이후 준공된 아파트 ({max_age}년 이내)")
 
     if "buildYear" in filtered_df.columns:
@@ -435,7 +446,7 @@ def main():
     floor_str = "전체 층수"
     if "floor" in df.columns and df["floor"].notna().any():
         floor_numeric_all = pd.to_numeric(df["floor"], errors="coerce").dropna()
-        db_min_floor = int(max(1, floor_numeric_all.min())) if not floor_numeric_all.empty else 1
+        db_min_floor = 1
         db_max_floor = int(max(10, floor_numeric_all.max())) if not floor_numeric_all.empty else 30
         default_min_floor = max(db_min_floor, min(5, db_max_floor))
         if "filter_floor" in st.session_state:
@@ -688,23 +699,30 @@ def main():
             compute_monthly_prices, include_groups=False
         ).reset_index(level=0).reset_index(drop=True)
         st.dataframe(monthly_table.rename(columns={"aptNm": "단지명", "중위가격": "중위가격(만원)"}),
-                     use_container_width=True, hide_index=True)
+                     width="stretch", hide_index=True)
         history_dates = df["dealDate"].dropna()
+        history_bounds = df.attrs.get("history_date_bounds")
         if not history_dates.empty:
-            st.caption(f"신고가 비교 범위: 저장된 계약일 {history_dates.min():%Y-%m-%d} ~ {history_dates.max():%Y-%m-%d}. "
+            history_min = pd.to_datetime(history_bounds[0]) if history_bounds and history_bounds[0] else history_dates.min()
+            history_max = pd.to_datetime(history_bounds[1]) if history_bounds and history_bounds[1] else history_dates.max()
+            st.caption(f"신고가 비교 범위: 저장된 계약일 {history_min:%Y-%m-%d} ~ {history_max:%Y-%m-%d}. "
                        "단지·면적타입별로 전체 층수의 취소되지 않은 거래를 비교하며, 첫 관측 거래도 포함합니다. "
                        "화면의 기간·층수 필터 이전 데이터를 사용하며 과거 전체 이력의 최고가를 뜻하지 않습니다.")
 
         # 2. 차트 컨트롤 옵션 바
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            show_ma = st.checkbox("단지별 7일 이동평균 추세선", key="show_ma", value=True, help="당일을 포함한 최근 7일 내 거래일별 평균가격의 평균입니다. 거래 없는 날은 제외하고, 각 거래일에 동일한 가중치를 줍니다. 현재 선택 기간 안의 거래만 사용합니다.")
+            if "show_ma" not in st.session_state: st.session_state.show_ma = True
+            show_ma = st.checkbox("단지별 7일 이동평균 추세선", key="show_ma", help="당일을 포함한 최근 7일 내 거래일별 평균가격의 평균입니다. 거래 없는 날은 제외하고, 각 거래일에 동일한 가중치를 줍니다. 현재 선택 기간 안의 거래만 사용합니다.")
         with c2:
-            show_ath = st.checkbox("🌟 수집 기간 내 신고가 갱신 거래 하이라이트", key="show_ath", value=True)
+            if "show_ath" not in st.session_state: st.session_state.show_ath = True
+            show_ath = st.checkbox("🌟 수집 기간 내 신고가 갱신 거래 하이라이트", key="show_ath")
         with c3:
-            show_volume = st.checkbox("📊 거래량(건수) 서브플롯 결합", key="show_volume", value=True)
+            if "show_volume" not in st.session_state: st.session_state.show_volume = True
+            show_volume = st.checkbox("📊 거래량(건수) 서브플롯 결합", key="show_volume")
         with c4:
-            show_mean_line = st.checkbox("전체 평균 가격 중심축 표시", key="show_mean_line", value=True)
+            if "show_mean_line" not in st.session_state: st.session_state.show_mean_line = True
+            show_mean_line = st.checkbox("전체 평균 가격 중심축 표시", key="show_mean_line")
 
         # 3. Plotly 시계열 결합 차트 생성 (거래량 서브플롯 포함)
         if show_volume:
@@ -906,7 +924,7 @@ def main():
                 ),
             )
 
-        st.plotly_chart(fig_trend, use_container_width=True)
+        st.plotly_chart(fig_trend, width="stretch")
 
     # ---------------------------------------------------------
     # TAB 2: 단지별 평당 평균 가격 비교 (동적 축 스케일링 적용)
@@ -987,7 +1005,7 @@ def main():
             xaxis=dict(range=[x_min_p, x_max_p], tickformat=","),
             margin=dict(l=150, r=40, t=50, b=50),
         )
-        st.plotly_chart(fig_hbar, use_container_width=True)
+        st.plotly_chart(fig_hbar, width="stretch")
 
     # ---------------------------------------------------------
     # TAB 3: 층수 & 준공·월별 심층 분석
@@ -1019,7 +1037,7 @@ def main():
                 hover_data=["regionName", "dealDate"],
             )
             fig_floor_all.update_layout(height=420, yaxis=dict(tickformat=","))
-            st.plotly_chart(fig_floor_all, use_container_width=True)
+            st.plotly_chart(fig_floor_all, width="stretch")
 
         with col_f2:
             # 단지별 층수 그룹(저층/중층/고층) 평균 가격 비교 (동적 Y축 스케일링)
@@ -1047,7 +1065,7 @@ def main():
                 height=420,
                 yaxis=dict(range=[max(0, int(min_floor_pr * 0.85)), int(max_floor_pr * 1.06)], tickformat=","),
             )
-            st.plotly_chart(fig_floor_group, use_container_width=True)
+            st.plotly_chart(fig_floor_group, width="stretch")
 
         # 단지별 층수 회귀 상세 분석 테이블
         st.markdown("##### 📋 단지별 층수·가격 상관관계와 표본 수")
@@ -1066,7 +1084,7 @@ def main():
                     "고층(16층+) 평균": format_korean_currency(sub[sub["floor"] >= 16]["dealAmount"].mean()),
                 })
         if apt_floor_stats:
-            st.dataframe(pd.DataFrame(apt_floor_stats), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(apt_floor_stats), width="stretch", hide_index=True)
         else:
             st.info("단지별 회귀 분석에는 가격·층수가 있는 거래 3건 이상과 서로 다른 층수가 필요합니다.")
 
@@ -1111,7 +1129,7 @@ def main():
                 yaxis=dict(tickfont=dict(size=13, weight="bold")),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
-            st.plotly_chart(fig_build_monthly, use_container_width=True)
+            st.plotly_chart(fig_build_monthly, width="stretch")
 
     # ---------------------------------------------------------
     # TAB 4: 거래량 & 가격 분포 (아파트 단지별 보기 기본 우선)
@@ -1146,7 +1164,7 @@ def main():
                     template="plotly_white",
                 )
                 fig_v_a.update_layout(height=430)
-                st.plotly_chart(fig_v_a, use_container_width=True)
+                st.plotly_chart(fig_v_a, width="stretch")
 
             with col_v2:
                 # 단지별 박스플롯 (단지 일관 고유 색상 매핑 적용)
@@ -1162,7 +1180,7 @@ def main():
                     template="plotly_white",
                 )
                 fig_b_a.update_layout(height=430, showlegend=False, yaxis=dict(tickformat=","))
-                st.plotly_chart(fig_b_a, use_container_width=True)
+                st.plotly_chart(fig_b_a, width="stretch")
 
             st.markdown("##### 📋 단지별 세부 통계 요약표 (사분위수 & 평당가 & 최근 거래일)")
             apt_detail_stats = []
@@ -1185,7 +1203,7 @@ def main():
                 })
             
             apt_stat_df = pd.DataFrame(apt_detail_stats).sort_values(by="거래건수", ascending=False)
-            st.dataframe(apt_stat_df, use_container_width=True, hide_index=True)
+            st.dataframe(apt_stat_df, width="stretch", hide_index=True)
 
         else: # 🌐 지역(구)별 보기
             col_v1, col_v2 = st.columns(2)
@@ -1203,7 +1221,7 @@ def main():
                     template="plotly_white",
                 )
                 fig_v_r.update_layout(height=430)
-                st.plotly_chart(fig_v_r, use_container_width=True)
+                st.plotly_chart(fig_v_r, width="stretch")
 
             with col_v2:
                 fig_h_r = px.histogram(
@@ -1217,7 +1235,7 @@ def main():
                     marginal="box",
                 )
                 fig_h_r.update_layout(height=430, yaxis=dict(tickformat=","), xaxis=dict(tickformat=","))
-                st.plotly_chart(fig_h_r, use_container_width=True)
+                st.plotly_chart(fig_h_r, width="stretch")
 
             st.markdown("##### 📋 지역별 가격 통계 요약표")
             reg_stat = (
@@ -1237,7 +1255,7 @@ def main():
             reg_stat["최저가"] = reg_stat["최저가"].apply(format_korean_currency)
             reg_stat["최고가"] = reg_stat["최고가"].apply(format_korean_currency)
             reg_stat["표준편차"] = reg_stat["표준편차"].apply(lambda x: f"±{int(round(x)):,}만원" if pd.notna(x) else "-")
-            st.dataframe(reg_stat, use_container_width=True, hide_index=True)
+            st.dataframe(reg_stat, width="stretch", hide_index=True)
 
     # ---------------------------------------------------------
     # TAB 5: 실거래 상세 목록 & CSV 다운로드
@@ -1348,7 +1366,7 @@ def main():
 
         table_df = table_df.rename(columns=col_rename_map)
 
-        st.dataframe(table_df, use_container_width=True, hide_index=True)
+        st.dataframe(table_df, width="stretch", hide_index=True)
 
         # 다이나믹 파일명 생성 (단지명 선택 시 파일명에 반영)
         apt_tag = f"_{tab5_selected_apts[0]}" if len(tab5_selected_apts) == 1 else f"_{len(tab5_selected_apts)}단지" if len(tab5_selected_apts) > 1 else ""

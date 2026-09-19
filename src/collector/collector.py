@@ -14,6 +14,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.db.db_manager import RealEstateDB
+from src.transactions import normalize_transactions
 
 # .env 파일이 존재하는 경우 환경변수로 자동 로드 (로컬 테스트용)
 try:
@@ -125,7 +126,7 @@ def get_retry_session(retries: int = 3, backoff_factor: float = 0.5) -> requests
     return session
 
 
-def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 1000):
+def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 1000, session=None, timeout: int = 15):
     """
     단일 페이지의 공공데이터포털 실거래가 API를 호출합니다.
     (반환: items_list, total_count, result_code, result_msg)
@@ -140,12 +141,12 @@ def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_
         "numOfRows": str(num_of_rows),
     }
 
-    session = get_retry_session()
+    session = session or get_retry_session()
     try:
-        res = session.get(API_URL, params=params, timeout=15)
+        res = session.get(API_URL, params=params, timeout=timeout)
         if res.status_code in [401, 403] or "SERVICE_KEY_IS_NULL" in res.text:
             raw_url = f"{API_URL}?serviceKey={api_key.strip()}&LAWD_CD={lawd_cd}&DEAL_YMD={deal_ymd}&pageNo={page_no}&numOfRows={num_of_rows}"
-            res = session.get(raw_url, timeout=15)
+            res = session.get(raw_url, timeout=timeout)
 
         data = xmltodict.parse(res.text)
     except Exception as e:
@@ -180,15 +181,18 @@ def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_
     return items_list, total_count, result_code, result_msg
 
 
-def fetch_all_pages_for_month(api_key: str, lawd_cd: str, region_name: str, deal_ymd: str) -> list:
+def fetch_all_pages_for_month(api_key: str, lawd_cd: str, region_name: str, deal_ymd: str, strict: bool = False) -> list:
     """
     특정 년월(DEAL_YMD) 및 지역(LAWD_CD)에 대해 전체 페이지를 순회하며 데이터를 수집합니다.
     """
     num_of_rows = 1000
     all_items = []
 
-    items, total_count, code, msg = fetch_page(api_key, lawd_cd, deal_ymd, page_no=1, num_of_rows=num_of_rows)
+    session = get_retry_session()
+    items, total_count, code, msg = fetch_page(api_key, lawd_cd, deal_ymd, page_no=1, num_of_rows=num_of_rows, session=session)
     if code not in ["00", "000", "INFO-000"]:
+        if strict:
+            raise RuntimeError(f"{region_name} {deal_ymd} first page failed: {code} {msg}")
         return []
 
     all_items.extend(items)
@@ -200,10 +204,15 @@ def fetch_all_pages_for_month(api_key: str, lawd_cd: str, region_name: str, deal
     print(f"  > [{region_name} ({lawd_cd})] {deal_ymd}: 총 {total_count}건 (전체 {total_pages}페이지 중 1페이지 완료)")
 
     for page in range(2, total_pages + 1):
-        p_items, _, p_code, _ = fetch_page(api_key, lawd_cd, deal_ymd, page_no=page, num_of_rows=num_of_rows)
+        p_items, _, p_code, p_msg = fetch_page(api_key, lawd_cd, deal_ymd, page_no=page, num_of_rows=num_of_rows, session=session)
         if p_code in ["00", "000", "INFO-000"] and p_items:
             all_items.extend(p_items)
             print(f"    - {page}/{total_pages} 페이지 수집 완료 ({len(p_items)}건)")
+        elif strict:
+            raise RuntimeError(f"{region_name} {deal_ymd} page {page}/{total_pages} failed: {p_code} {p_msg}")
+
+    if strict and len(all_items) != total_count:
+        raise RuntimeError(f"{region_name} {deal_ymd} row count mismatch: expected {total_count}, got {len(all_items)}")
 
     return all_items
 
@@ -297,7 +306,7 @@ def clean_and_filter(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     if target_complexes and "aptNm" in df.columns:
         df = df[df["aptNm"].isin(target_complexes)]
 
-    return df
+    return normalize_transactions(df)
 
 
 def run_collection():
@@ -332,6 +341,7 @@ def run_collection():
     print("-" * 60)
 
     raw_collected_items = []
+    failed_tasks = []
     
     for r in regions:
         code = str(r.get("code"))
@@ -348,7 +358,12 @@ def run_collection():
         print(f"📍 [{name} ({code})] 모드: {mode_desc}")
 
         for ym in target_ym_list:
-            items = fetch_all_pages_for_month(api_key, code, name, ym)
+            try:
+                items = fetch_all_pages_for_month(api_key, code, name, ym, strict=True)
+            except RuntimeError as error:
+                failed_tasks.append({"region": code, "month": ym, "error": str(error)})
+                print(f"❌ {error}")
+                continue
             if items:
                 for item in items:
                     item["regionName"] = name
@@ -370,6 +385,12 @@ def run_collection():
         print(f"💾 SQLite 적재 완료: 기존 {before_total_cnt}건 -> 최종 {total_cnt}건 (신규/갱신: {inserted_cnt}건)")
     else:
         print(f"ℹ️ 적재할 신규 데이터가 없습니다. (현재 DB 총 건수: {before_total_cnt}건)")
+
+    if failed_tasks:
+        print(f"❌ 수집 실패: {len(failed_tasks)}개 지역·월. DB 커밋/푸시를 중단합니다.")
+        for failure in failed_tasks:
+            print(f"  - {failure['region']} {failure['month']}: {failure['error']}")
+        raise RuntimeError("일부 지역·월 수집이 불완전합니다.")
 
     print(f"🎉 파이프라인 정상 종료: {db_path}")
     print("=" * 60)

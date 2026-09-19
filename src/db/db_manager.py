@@ -2,6 +2,7 @@ import os
 import sqlite3
 from typing import Optional, Tuple
 import pandas as pd
+from src.transactions import normalize_transactions
 
 
 class RealEstateDB:
@@ -66,6 +67,9 @@ class RealEstateDB:
                     dealType TEXT,
                     cdealType TEXT,
                     cdealDay TEXT,
+                    aptDong TEXT,
+                    rgstDate TEXT,
+                    transactionKey TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """
@@ -78,16 +82,23 @@ class RealEstateDB:
                 cursor.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN cdealType TEXT")
             if "cdealDay" not in existing_cols:
                 cursor.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN cdealDay TEXT")
+            for column in ("aptDong", "rgstDate", "transactionKey"):
+                if column not in existing_cols:
+                    cursor.execute(f"ALTER TABLE {self.TABLE_NAME} ADD COLUMN {column} TEXT")
+
+            # Backfill deterministic identities and canonical NULLs for legacy rows.
+            cursor.execute(f"SELECT * FROM {self.TABLE_NAME} WHERE transactionKey IS NULL OR transactionKey = ''")
+            legacy_rows = cursor.fetchall()
+            if legacy_rows:
+                legacy = normalize_transactions(pd.DataFrame([dict(row) for row in legacy_rows]))
+                cursor.executemany(
+                    f"UPDATE {self.TABLE_NAME} SET transactionKey=?, dealType=?, cdealType=?, cdealDay=? WHERE id=?",
+                    [(r.transactionKey, r.dealType, r.cdealType, r.cdealDay, int(r.id)) for r in legacy.itertuples()],
+                )
 
             # 2. 복합 UNIQUE 인덱스 생성 (중복 거래 완벽 방지 & 덮어쓰기)
-            cursor.execute(
-                f"""
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_unique
-                ON {self.TABLE_NAME} (
-                    dealYear, dealMonth, dealDay, sggCd, umdNm, jibun, aptNm, floor, excluUseAr, dealAmount
-                );
-                """
-            )
+            cursor.execute("DROP INDEX IF EXISTS idx_transactions_unique")
+            cursor.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_unique ON {self.TABLE_NAME} (transactionKey)")
 
             # 3. 조회 성능 향상을 위한 단일 인덱스 생성
             cursor.execute(
@@ -125,29 +136,18 @@ class RealEstateDB:
             "dealType",
             "cdealType",
             "cdealDay",
+            "aptDong",
+            "rgstDate",
+            "transactionKey",
         ]
 
         # 데이터프레임에 없는 컬럼은 None으로 보완
-        save_df = df.copy()
+        save_df = normalize_transactions(df)
         for col in columns:
             if col not in save_df.columns:
                 save_df[col] = None
 
-        # 날짜 컬럼을 문자열(YYYY-MM-DD)로 변환
-        if "dealDate" in save_df.columns and pd.api.types.is_datetime64_any_dtype(save_df["dealDate"]):
-            save_df["dealDate"] = save_df["dealDate"].dt.strftime("%Y-%m-%d")
-
-        # 거래유형(dealType) 기본값 처리: None, '', '-', 'nan'인 경우 '중개거래'로 지정
-        if "dealType" in save_df.columns:
-            save_df["dealType"] = save_df["dealType"].astype(str).str.strip()
-            invalid_deal_type = save_df["dealType"].isna() | save_df["dealType"].isin(["None", "nan", "", "-", "NoneType"])
-            save_df["dealType"] = save_df["dealType"].mask(invalid_deal_type, "중개거래")
-
-        # dealMonth, dealDay 패딩(2자리) 표준화 (중복 방지)
-        if "dealMonth" in save_df.columns:
-            save_df["dealMonth"] = save_df["dealMonth"].astype(str).str.strip().str.zfill(2)
-        if "dealDay" in save_df.columns:
-            save_df["dealDay"] = save_df["dealDay"].astype(str).str.strip().str.zfill(2)
+        save_df["dealDate"] = pd.to_datetime(save_df["dealDate"], errors="coerce").dt.strftime("%Y-%m-%d")
 
         # NaN 값을 None(NULL)으로 변환
         records = save_df[columns].to_dict(orient="records")
@@ -155,8 +155,14 @@ class RealEstateDB:
         placeholders = ", ".join(["?" for _ in columns])
         col_names = ", ".join(columns)
         insert_sql = f"""
-            INSERT OR REPLACE INTO {self.TABLE_NAME} ({col_names}, updated_at)
+            INSERT INTO {self.TABLE_NAME} ({col_names}, updated_at)
             VALUES ({placeholders}, CURRENT_TIMESTAMP)
+            ON CONFLICT(transactionKey) DO UPDATE SET
+                dealAmount=excluded.dealAmount, regionName=excluded.regionName,
+                buildYear=excluded.buildYear, dealType=excluded.dealType,
+                cdealType=excluded.cdealType, cdealDay=excluded.cdealDay,
+                aptDong=excluded.aptDong, rgstDate=excluded.rgstDate,
+                areaType=excluded.areaType, updated_at=CURRENT_TIMESTAMP
         """
 
         data_tuples = [tuple(r[col] for col in columns) for r in records]
@@ -191,6 +197,7 @@ class RealEstateDB:
                     dealType,
                     cdealType,
                     cdealDay
+                    ,aptDong, rgstDate, transactionKey
                 FROM {self.TABLE_NAME}
                 ORDER BY dealDate DESC, dealAmount DESC
             """
@@ -201,6 +208,36 @@ class RealEstateDB:
 
         return df
 
+    def get_transactions(self, start_date=None, end_date=None, regions=None) -> pd.DataFrame:
+        """Load only the requested slice instead of materializing the whole DB."""
+        clauses, params = [], []
+        if start_date:
+            clauses.append("dealDate >= ?")
+            params.append(str(start_date))
+        if end_date:
+            clauses.append("dealDate <= ?")
+            params.append(str(end_date))
+        if regions:
+            placeholders = ",".join("?" for _ in regions)
+            clauses.append(f"regionName IN ({placeholders})")
+            params.extend(regions)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        query = f"""
+            WITH ranked AS (
+                SELECT *, CASE
+                    WHEN COALESCE(cdealType, '') NOT IN ('O', '0', '취소', '해제')
+                     AND dealAmount > COALESCE(MAX(CASE WHEN COALESCE(cdealType, '') NOT IN ('O', '0', '취소', '해제') THEN dealAmount END)
+                         OVER (PARTITION BY aptNm, areaType ORDER BY dealDate, id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), -1)
+                    THEN 1 ELSE 0 END AS is_ath
+                FROM {self.TABLE_NAME}
+            )
+            SELECT * FROM ranked{where} ORDER BY dealDate DESC, dealAmount DESC
+        """
+        with self._get_connection() as conn:
+            df = pd.read_sql_query(query, conn, params=params)
+        df["dealDate"] = pd.to_datetime(df["dealDate"], errors="coerce")
+        return df
+
     def get_count(self) -> int:
         """현재 DB에 저장된 총 거래 건수를 반환합니다."""
         with self._get_connection() as conn:
@@ -208,6 +245,12 @@ class RealEstateDB:
             cursor.execute(f"SELECT COUNT(*) FROM {self.TABLE_NAME}")
             row = cursor.fetchone()
             return row[0] if row else 0
+
+    def get_date_bounds(self):
+        """Return lightweight full-history bounds without loading transaction rows."""
+        with self._get_connection() as conn:
+            row = conn.execute(f"SELECT MIN(dealDate), MAX(dealDate) FROM {self.TABLE_NAME}").fetchone()
+        return row[0], row[1]
 
     def has_region_data(self, sgg_cd: str) -> bool:
         """특정 지역 코드(sggCd)의 데이터가 DB에 존재하는지 확인합니다."""

@@ -33,6 +33,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.db.db_manager import RealEstateDB
+from src.transactions import normalize_transactions
 
 KST = timezone(timedelta(hours=9))
 
@@ -110,6 +111,10 @@ def parse_and_transform(df: pd.DataFrame, only_84: bool = False, target_regions:
             col_map["cdealDay"] = col
         elif "거래유형" in col:
             col_map["dealType"] = col
+        elif col.strip() == "동":
+            col_map["aptDong"] = col
+        elif "등기일자" in col:
+            col_map["rgstDate"] = col
 
     result = pd.DataFrame()
 
@@ -218,6 +223,9 @@ def parse_and_transform(df: pd.DataFrame, only_84: bool = False, target_regions:
         result["cdealDay"] = None
         result["cdealType"] = None
 
+    result["aptDong"] = df[col_map["aptDong"]] if "aptDong" in col_map else None
+    result["rgstDate"] = df[col_map["rgstDate"]] if "rgstDate" in col_map else None
+
     # 지역 필터링 (지정 시에만 적용)
     if target_regions:
         result = result[result["sggCd"].isin(target_regions)]
@@ -226,7 +234,7 @@ def parse_and_transform(df: pd.DataFrame, only_84: bool = False, target_regions:
     if only_84:
         result = result[(result["excluUseAr"] >= 84.0) & (result["excluUseAr"] < 85.0)]
 
-    return result
+    return normalize_transactions(result)
 
 
 def main():

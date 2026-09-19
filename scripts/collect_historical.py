@@ -38,6 +38,8 @@ except ImportError:
     pass
 
 from src.db.db_manager import RealEstateDB
+from src.transactions import normalize_transactions
+from src.collector.collector import fetch_page as shared_fetch_page, get_retry_session as shared_retry_session
 
 KST = timezone(timedelta(hours=9))
 API_URL = "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
@@ -53,6 +55,8 @@ def get_kst_now():
 
 
 def get_retry_session():
+    return shared_retry_session(retries=5, backoff_factor=1.0)
+    # Kept below only for source compatibility with older checkouts.
     session = requests.Session()
     retry_strategy = Retry(
         total=5,
@@ -86,6 +90,8 @@ def generate_year_month_list(start_ym: str, end_ym: str) -> list:
 
 
 def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 200, timeout: int = 50):
+    return shared_fetch_page(api_key, lawd_cd, deal_ymd, page_no, num_of_rows, session=get_retry_session(), timeout=timeout)
+    # Kept below only for source compatibility with older checkouts.
     clean_service_key = unquote(api_key.strip())
     params = {
         "serviceKey": clean_service_key,
@@ -262,7 +268,7 @@ def process_items_to_df(items: list, region_name: str, only_84: bool = False, wi
         valid_by = pd.to_numeric(df["buildYear"], errors="coerce")
         df = df[valid_by >= (current_year - within_years)]
 
-    return df
+    return normalize_transactions(df)
 
 
 def main():

@@ -223,6 +223,15 @@ class TestApiMockUnit(unittest.TestCase):
         self.assertEqual(results, [])
         self.assertEqual(mock_fetch_page.call_count, 1)
 
+    @patch("src.collector.collector.fetch_page")
+    def test_strict_collection_rejects_incomplete_page(self, mock_fetch_page):
+        mock_fetch_page.side_effect = [
+            ([{"aptNm": "first"}], 1001, "00", "OK"),
+            ([], 1001, "ERROR", "timeout"),
+        ]
+        with self.assertRaises(RuntimeError):
+            fetch_all_pages_for_month(self.api_key, self.lawd_cd, "수원시 팔달구", self.deal_ymd, strict=True)
+
 
 class TestApiDataFilter(unittest.TestCase):
     """전처리 및 필터링 로직 검증"""
