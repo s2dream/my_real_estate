@@ -309,12 +309,28 @@ def load_data():
     try:
         db = RealEstateDB(db_path=db_path)
         start_date = parse_setting_date(setting.get("dashboard", {}).get("start_date", "2026-01-01"))
-        df = db.get_transactions(start_date=start_date)
-        # Streamlit AppTest mocks from older callers may only expose the legacy method.
-        if not isinstance(df, pd.DataFrame):
+        get_transactions = getattr(db, "get_transactions", None)
+        df = None
+        if callable(get_transactions):
+            queried_df = get_transactions(start_date=start_date)
+            if isinstance(queried_df, pd.DataFrame):
+                df = queried_df
+        if df is None:
+            # 배포 중 구버전 DB 모듈이 남아 있어도 기존 조회 API로 계속 동작한다.
             df = db.get_all_transactions()
-        else:
-            df.attrs["history_date_bounds"] = db.get_date_bounds()
+            if not df.empty and "dealDate" in df.columns:
+                df["dealDate"] = pd.to_datetime(df["dealDate"], errors="coerce")
+                history_dates = df["dealDate"].dropna()
+                if not history_dates.empty:
+                    df.attrs["history_date_bounds"] = (history_dates.min(), history_dates.max())
+                df = compute_all_time_highs(df)
+                df = df[df["dealDate"].dt.date >= start_date].copy()
+
+        get_date_bounds = getattr(db, "get_date_bounds", None)
+        if callable(get_date_bounds) and isinstance(df, pd.DataFrame):
+            history_bounds = get_date_bounds()
+            if isinstance(history_bounds, (tuple, list)) and len(history_bounds) == 2:
+                df.attrs["history_date_bounds"] = tuple(history_bounds)
         if df.empty:
             return df
 

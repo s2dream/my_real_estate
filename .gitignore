@@ -220,3 +220,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SQLite runtime sidecar files
+*.db-wal
+*.db-shm

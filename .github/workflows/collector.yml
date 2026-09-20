@@ -2,8 +2,8 @@ name: Real Estate Data Collector Pipeline
 
 on:
   schedule:
-    # 매 4시간마다 실행 (UTC 기준 4시간 정각)
-    - cron: '0 */4 * * *'
+    # 매 4시간마다 실행하되 GitHub Actions가 몰리는 정각은 피함 (UTC 기준)
+    - cron: '17 */4 * * *'
   workflow_dispatch: # Actions 탭에서 수동으로 즉시 실행 가능
 
 permissions:
@@ -19,10 +19,10 @@ jobs:
 
     steps:
       - name: 저장소 체크아웃
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Python 3.11 환경 설정
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -42,7 +42,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Actions Collector"
-          git add data/
+          git add data/transactions.db
           # 변경사항이 있는 경우에만 커밋 및 푸시 (skip ci로 무한루프 방지)
           if git diff --staged --quiet; then
             echo "변경되거나 신규 추가된 데이터가 없습니다."

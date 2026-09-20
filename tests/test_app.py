@@ -77,6 +77,26 @@ namespace['main']()
         at.run()
         self.assertFalse(at.exception, f"app.py 실행 중 예외 발생: {at.exception}")
 
+    def test_load_data_supports_legacy_db_api(self):
+        """배포 중 구버전 DB 클래스가 로드돼도 전체 조회 API로 대체한다."""
+        class LegacyDB:
+            def __init__(legacy_self, db_path=None):
+                legacy_self.db = RealEstateDB(db_path)
+
+            def get_all_transactions(legacy_self):
+                return legacy_self.db.get_all_transactions()
+
+        with patch("app.load_setting", return_value={
+            "storage": {"db_path": self.db_path},
+            "dashboard": {"start_date": "2026-01-01"},
+        }), patch("app.RealEstateDB", LegacyDB):
+            loaded = load_data()
+
+        self.assertIsInstance(loaded, pd.DataFrame)
+        self.assertFalse(loaded.empty)
+        self.assertGreaterEqual(loaded["dealDate"].min(), pd.Timestamp("2026-01-01"))
+        self.assertIn("is_ath", loaded.columns)
+
     def test_floor_change_preserves_contract_period(self):
         from datetime import date
         at = self.make_app().run()
