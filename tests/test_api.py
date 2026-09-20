@@ -65,6 +65,7 @@ class TestApiMockUnit(unittest.TestCase):
         self.assertIsInstance(items, list)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["aptNm"], "매교역푸르지오SKVIEW")
+        self.assertEqual(mock_session.get.call_args.kwargs["timeout"], (20, 60))
 
     @patch("src.collector.collector.get_retry_session")
     def test_fetch_page_multiple_items(self, mock_get_session):

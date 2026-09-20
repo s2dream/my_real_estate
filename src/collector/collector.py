@@ -28,6 +28,7 @@ KST = timezone(timedelta(hours=9))
 
 # 국토교통부 아파트매매 실거래 자료 API URL
 API_URL = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
+REQUEST_TIMEOUT = (20, 60)  # (연결 제한, 응답 읽기 제한), 초 단위
 
 
 def load_config(config_path="setting.yml"):
@@ -126,7 +127,7 @@ def get_retry_session(retries: int = 3, backoff_factor: float = 0.5) -> requests
     return session
 
 
-def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 1000, session=None, timeout: int = 15):
+def fetch_page(api_key: str, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 1000, session=None, timeout=REQUEST_TIMEOUT):
     """
     단일 페이지의 공공데이터포털 실거래가 API를 호출합니다.
     (반환: items_list, total_count, result_code, result_msg)
